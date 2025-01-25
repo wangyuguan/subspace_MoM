@@ -4,7 +4,7 @@ import finufft
 from aspire.basis.basis_utils import all_besselj_zeros, lgwt 
 from scipy.special import spherical_jn
 
-def vol_t_coef(vol, ell_max, coef_real=True):
+def sphFB_transform(vol, ell_max):
     """
     Project the volume into spherical Bessel basis 
     :param vol: The volume of size nxnxn
@@ -21,11 +21,10 @@ def vol_t_coef(vol, ell_max, coef_real=True):
     vol_coef = np.zeros(nb, dtype=np.complex128)
 
     # grid points in real domain 
-    x,y,z = get_3d_unif_grid(n)
-
-    X = 2*np.pi*x
-    Y = 2*np.pi*y
-    Z = 2*np.pi*z 
+    grid = get_3d_unif_grid(n)
+    X = 2*np.pi*grid['xs']
+    Y = 2*np.pi*grid['ys']
+    Z = 2*np.pi*grid['zs']
 
     X = X.astype(np.float64)
     Y = Y.astype(np.float64)
@@ -37,7 +36,7 @@ def vol_t_coef(vol, ell_max, coef_real=True):
     nph = int(1.5*n)
 
     c = 0.5
-    xr,xth,xph,w = get_spherequad(nr,nth,nph,c)
+    xr,xth,xph,w = get_3dballquad(nr,nth,nph,c)
 
     kx = xr*np.sin(xth)*np.cos(xph)
     ky = xr*np.sin(xth)*np.sin(xph)
@@ -84,62 +83,14 @@ def vol_t_coef(vol, ell_max, coef_real=True):
                 indices[(ell,k,m)] = i
                 i += 1 
 
-    if coef_real:
-        _, vol_c_t_r = get_vol_r_t_c_mat(ell_max, k_max, indices)
-        vol_coef = np.real(vol_c_t_r @ vol_coef)
-
     return vol_coef, k_max, r0, indices
 
 
-def coef_t_vol(vol_coef, ell_max, n, k_max, r0, indices, coef_real=True):
-    """
-    Map the spherical Bessel coefficient into the volume 
-    :param vol_coef: The spherical Bessel coefficient
-    :param ell_max: The truncation limit for spherical harmonics 
-    :param n: The resolution of the volume 
-    :param k_max: The truncation limit for spherical Bessel function 
-    :param r0: Roots of spherical Bessel function 
-    :return: The nxnxn volume represented by the spherical Bessel coefficient
+def sphFB_eval(vol_coef, ell_max, k_max, r0, indices, grid):
 
-    """
-    nb = sum(k_max * (2 * np.arange(0, ell_max + 1) + 1))
-    assert nb == len(vol_coef), 'length of vector is wrong' 
-
-    if coef_real:
-        vol_r_t_c, _ = get_vol_r_t_c_mat(ell_max, k_max, indices)
-        vol_coef = vol_r_t_c @ vol_coef
-
-    x,y,z = get_3d_unif_grid(n)
-
-    X = 2*np.pi*x
-    Y = 2*np.pi*y
-    Z = 2*np.pi*z 
-
-    X = X.astype(np.float64)
-    Y = Y.astype(np.float64)
-    Z = Z.astype(np.float64)
-
-    # generate grid point in fourier domain 
-    nr = int(1.5*n)
-    nth = int(1.5*n)
-    nph = int(1.5*n)
-
-    c = 0.5
-    xr,xth,xph,w = get_spherequad(nr,nth,nph,c)
-
-
-    kx = xr*np.sin(xth)*np.cos(xph)
-    ky = xr*np.sin(xth)*np.sin(xph)
-    kz = xr*np.cos(xth)
-
-    kx = kx.astype(np.float64)
-    ky = ky.astype(np.float64)
-    kz = kz.astype(np.float64)
-
-    # evaluate inner product 
-    r_unique, r_indices = np.unique(xr, return_inverse=True)
-    th_unique, th_indices = np.unique(xth, return_inverse=True)
-    ph_unique, ph_indices = np.unique(xph, return_inverse=True)
+    r_unique, r_indices = np.unique(grid['rs'], return_inverse=True)
+    th_unique, th_indices = np.unique(grid['ths'], return_inverse=True)
+    ph_unique, ph_indices = np.unique(grid['phs'], return_inverse=True)
 
     lpall = norm_assoc_legendre_all(ell_max, np.cos(th_unique))
     lpall /= np.sqrt(4*np.pi)
@@ -148,9 +99,8 @@ def coef_t_vol(vol_coef, ell_max, n, k_max, r0, indices, coef_real=True):
     for m in range(-ell_max,ell_max+1):
         exp_all[m+ell_max,:] = np.exp(1j*m*ph_unique)
 
-    # evaluate in frequency space 
-    vol_expand_ft = 0 
-    i = 0 
+    vol = 0 
+    c = 0.5  
     for ell in range(0,ell_max+1):
         for k in range(0,k_max[ell]):
             z0k = r0[ell][k]
@@ -164,8 +114,61 @@ def coef_t_vol(vol_coef, ell_max, n, k_max, r0, indices, coef_real=True):
                 if m<0:
                     lpmn = (-1)**m * lpmn 
                 exps = exp_all[m+ell_max,:]
-                vol_expand_ft += vol_coef[i]*js[r_indices]*lpmn[th_indices]*exps[ph_indices]
-                i += 1 
+                vol += vol_coef[indices[ell,k,m]]*js[r_indices]*lpmn[th_indices]*exps[ph_indices]
+    
+    return vol 
+
+
+
+def coef_t_vol(vol_coef, ell_max, n, k_max, r0, indices):
+    """
+    Map the spherical Bessel coefficient into the volume 
+    :param vol_coef: The spherical Bessel coefficient
+    :param ell_max: The truncation limit for spherical harmonics 
+    :param n: The resolution of the volume 
+    :param k_max: The truncation limit for spherical Bessel function 
+    :param r0: Roots of spherical Bessel function 
+    :return: The nxnxn volume represented by the spherical Bessel coefficient
+
+    """
+    nb = sum(k_max * (2 * np.arange(0, ell_max + 1) + 1))
+    assert nb == len(vol_coef), 'length of vector is wrong' 
+
+    grid = get_3d_unif_grid(n)
+    X = 2*np.pi*grid['xs']
+    Y = 2*np.pi*grid['ys']
+    Z = 2*np.pi*grid['zs']
+
+    X = X.astype(np.float64)
+    Y = Y.astype(np.float64)
+    Z = Z.astype(np.float64)
+
+    # generate grid point in fourier domain 
+    nr = int(1.5*n)
+    nth = int(1.5*n)
+    nph = int(1.5*n)
+
+    c = 0.5
+    xr,xth,xph,w = get_3dballquad(nr,nth,nph,c)
+    kx = xr*np.sin(xth)*np.cos(xph)
+    ky = xr*np.sin(xth)*np.sin(xph)
+    kz = xr*np.cos(xth)
+
+    grid = {}
+    grid['rs'] = xr 
+    grid['ths'] = xth
+    grid['phs'] = xph
+    grid['xs'] = kx
+    grid['ys'] = ky 
+    grid['zs'] = kz 
+
+
+    kx = kx.astype(np.float64)
+    ky = ky.astype(np.float64)
+    kz = kz.astype(np.float64)
+
+    # evaluate 
+    vol_expand_ft = sphFB_eval(vol_coef, ell_max, k_max, r0, indices, grid)
 
     # map into real domain 
     f = vol_expand_ft*w 
@@ -179,33 +182,37 @@ def coef_t_vol(vol_coef, ell_max, n, k_max, r0, indices, coef_real=True):
     
 
     
-def get_spherequad(nr,nth,nph,c):
+def get_3dballquad(nr,nth,nph,R):
     """
-    Get the spherical rule in 3D 
+    Get the quadrature rule under spherical coord in a ball of radius R such that 
+
+    \int_{||x||<=R} f dV  =  \sum_i w(i) * f(r(i),th(i),ph(i))  
+
     :param nr: The order of discretization for radial part 
     :param nth: The order of discretization for polar part 
     :param nph: The order of discretization for azimuthal  part 
+    :param R: The radius of the ball 
     :return: The quadrature points under spherical coordinate and the weights
 
     """
-    [xr,wr] = lgwt(nr,0,c)
-    [xth,wth] = lgwt(nth,-1,1)
-    xth = np.arccos(xth)
-    xph = phis = 2*np.pi*np.arange(0,nph)/nph
+    [r,wr] = lgwt(nr,0,R)
+    [th,wth] = lgwt(nth,-1,1)
+    th = np.arccos(th)
+    ph = phis = 2*np.pi*np.arange(0,nph)/nph
     wph = 2*np.pi*np.ones(nph)/nph
 
 
-    [xr,xth,xph] = np.meshgrid(xr,xth,xph,indexing='ij')
+    [r,th,ph] = np.meshgrid(r,th,ph,indexing='ij')
     [wr,wth,wph] = np.meshgrid(wr,wth,wph,indexing='ij')
 
-    w = wr*wth*wph*(xr**2)
+    w = wr*wth*wph*(r**2)
     w = w.flatten()
 
-    xr = xr.flatten()
-    xth = xth.flatten()
-    xph = xph.flatten()
+    r = r.flatten()
+    th = th.flatten()
+    ph = ph.flatten()
 
-    return xr,xth,xph,w
+    return r,th,ph,w
 
 
 def get_3d_unif_grid(n):
@@ -221,11 +228,16 @@ def get_3d_unif_grid(n):
         x = np.arange(-(n-1)/2,(n-1)/2+1)
  
     [x,y,z] = np.meshgrid(x,x,x,indexing='ij')
-    x = x.flatten()
-    y = y.flatten()
-    z = z.flatten() 
+    r, th, ph = cart2sph(x, y, z)
+    grid = {}
+    grid['xs'] = x.flatten()
+    grid['ys'] = y.flatten()
+    grid['zs'] = z.flatten() 
+    grid['rs'] = r.flatten()
+    grid['ths'] = th.flatten()
+    grid['phs'] = ph.flatten() 
 
-    return x,y,z 
+    return grid
 
     
     
@@ -348,31 +360,7 @@ def cart2sph(x, y, z):
             phi (float or array): Azimuthal angle (in radians)
     """
     r = np.sqrt(x**2 + y**2 + z**2)               # Radial distance
-    theta = np.arccos(z / r) if r != 0 else 0    # Polar angle
+    theta = np.zeros(r.shape)
+    theta = np.arccos(z[r!=0] / r[r!=0])         # Polar angle
     phi = np.arctan2(y, x)                       # Azimuthal angle
     return r, theta, phi
-
-
-
-
-# def get_indices(ell_max, k_max):
-#     """
-#     Create the indices for each basis function
-#     """
-#     count = sum(k_max * (2 * np.arange(0, ell_max + 1) + 1))
-#     indices_ells = np.zeros(count, dtype=int)
-#     indices_ms = np.zeros(count, dtype=int)
-#     indices_ks = np.zeros(count, dtype=int)
-
-#     ind = 0
-#     for ell in range(ell_max + 1):
-#         ks = range(0, k_max[ell])
-#         for m in range(-ell, ell + 1):
-#             rng = range(ind, ind + len(ks))
-#             indices_ells[rng] = ell
-#             indices_ms[rng] = m
-#             indices_ks[rng] = ks
-
-#             ind += len(ks)
-
-#     return {"ells": indices_ells, "ms": indices_ms, "ks": indices_ks}
