@@ -73,20 +73,6 @@ def wignerD_transform(fun, ell_max):
     w = walpha*wbeta*wgamma
     w = w.flatten()
 
-    
-    coef =  np.zeros(int(2*(ell_max*(ell_max+1)*(2*ell_max+1))/3+2*(ell_max*(ell_max+1))+ell_max+1), dtype=np.complex128)
-    for i in range(len(w)):
-        fi = fun(alpha[i],beta[i],gamma[i])
-        wi = w[i]
-        j = 0 
-        for ell in range(ell_max+1):
-            Dl = wignerD(ell,alpha[i],beta[i],gamma[i])
-            C = 8*np.pi**2/(2*ell+1)
-            for mp in range(-ell,ell+1):
-                for m in range(-ell,ell+1):
-                    coef[j] += np.conj(Dl[mp+ell,m+ell])*fi*wi/C
-                    j += 1 
-
     indices = {}
     j = 0 
     for ell in range(ell_max+1):
@@ -95,6 +81,19 @@ def wignerD_transform(fun, ell_max):
                 indices[(ell,mp,m)] = j 
                 j += 1 
 
+
+    
+    coef =  np.zeros(int(2*(ell_max*(ell_max+1)*(2*ell_max+1))/3+2*(ell_max*(ell_max+1))+ell_max+1), dtype=np.complex128)
+    for i in range(len(w)):
+        fi = fun(alpha[i],beta[i],gamma[i])
+        wi = w[i]
+        for ell in range(ell_max+1):
+            Dl = wignerD(ell,alpha[i],beta[i],gamma[i])
+            C = 8*np.pi**2/(2*ell+1)
+            for mp in range(-ell,ell+1):
+                for m in range(-ell,ell+1):
+                    coef[indices[(ell,mp,m)]] += np.conj(Dl[mp+ell,m+ell])*fi*wi/C
+    
     return coef, indices
 
 
