@@ -1,8 +1,8 @@
 import numpy as np 
-from volume import cart2sph, norm_assoc_legendre_all
+from volume import *
 from aspire.basis.basis_utils import lgwt
 
-def vMF_density(centers,w,kappa,xs):
+def vMF_density(centers,w,kappa,grid):
     """
     Evaluate the von-Mises-Fisher density on a sphere 
     :param centers: mx3 centers 
@@ -16,7 +16,9 @@ def vMF_density(centers,w,kappa,xs):
         # rs, ths, phs = cart2sph(xs[:,0],xs[:,1],xs[:,2])
         return 1/(4*np.pi)
     
-    f = np.exp(kappa * centers @ xs.T)
+    xyz = grid.get_xyz_combined()
+
+    f = np.exp(kappa * centers @ xyz.T)
     C = kappa/(2*np.pi*(np.exp(kappa)-np.exp(-kappa)))
     f = C*f 
     f = np.sum(np.diag(w) @ f, 0)
@@ -131,34 +133,32 @@ def sph_harm_transform(fun, ell_max):
     return coef, indices
 
 
-def get_spherequad(nth, nph):
-    """
-    Get the quadrature rule under polor coord on unit sphere such that 
+def sph_ham_coef_eval(spham_coef, indices, ell_max, grid):
     
-    \int_{||x||=1} f dS  =  \sum_i w(i) * f(th(i),ph(i))  
+    ths = grid.ths
+    phs = grid.phs
 
-    :param nr: The order of discretization for radial part 
-    :param nth: The order of discretization for polar part 
-    :param nph: The order of discretization for azimuthal  part 
-    :param R: The radius of the ball 
-    :return: The quadrature points under spherical coordinate and the weights
+    ths_unique, ths_indices = np.unique(ths, return_inverse=True)
+    phs_unique, phs_indices = np.unique(phs, return_inverse=True)
 
-    """
-    ths, wths = lgwt(nth,-1,1)
-    ths = np.arccos(ths)
+    lpall = norm_assoc_legendre_all(ell_max, np.cos(ths_unique))
+    lpall /= np.sqrt(4*np.pi)
 
-    phs = 2*np.pi*np.arange(nph)/nph 
-    wphs =  2*np.pi*np.ones(nph)/nph 
-  
-    ths, phs = np.meshgrid(ths, phs, indexing='ij')
-    ths, phs = ths.flatten(), phs.flatten()
+    exp_all = np.zeros((2*ell_max+1,len(phs_unique)), dtype=complex)
+    for m in range(-ell_max,ell_max+1):
+        exp_all[m+ell_max,:] = np.exp(1j*m*phs_unique)
 
-    wths, wphs = np.meshgrid(wths, wphs, indexing='ij')
-    wths, wphs = wths.flatten(), wphs.flatten()
-    w = wths*wphs 
-
-    return ths, phs, w
-
+    evals = 0
+    for ell in range(0,ell_max+1):
+        for m in range(-ell,ell+1):
+            lpmn = lpall[ell,abs(m),:]
+            exps = exp_all[m+ell_max,:]
+            if m<0:
+                lpmn = lpmn*(-1)**m
+            evals += spham_coef[indices[(ell,m)]]*lpmn[ths_indices]*exps[phs_indices]
+    
+    return evals
+            
 
 def Rz(th):
     """

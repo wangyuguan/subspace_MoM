@@ -3,6 +3,7 @@ import numpy.linalg as LA
 import finufft 
 from aspire.basis.basis_utils import all_besselj_zeros, lgwt 
 from scipy.special import spherical_jn
+from utils import *
 
 def sphFB_transform(vol, ell_max):
     """
@@ -22,9 +23,9 @@ def sphFB_transform(vol, ell_max):
 
     # grid points in real domain 
     grid = get_3d_unif_grid(n)
-    X = 2*np.pi*grid['xs']
-    Y = 2*np.pi*grid['ys']
-    Z = 2*np.pi*grid['zs']
+    X = 2*np.pi*grid.xs
+    Y = 2*np.pi*grid.ys
+    Z = 2*np.pi*grid.zs
 
     X = X.astype(np.float64)
     Y = Y.astype(np.float64)
@@ -36,11 +37,12 @@ def sphFB_transform(vol, ell_max):
     nph = int(1.5*n)
 
     c = 0.5
-    xr,xth,xph,w = get_3dballquad(nr,nth,nph,c)
+    _grid = get_3dballquad(nr,nth,nph,c)
+    w = _grid.w
 
-    kx = xr*np.sin(xth)*np.cos(xph)
-    ky = xr*np.sin(xth)*np.sin(xph)
-    kz = xr*np.cos(xth)
+    kx = _grid.xs
+    ky = _grid.ys
+    kz = _grid.zs
 
     kx = kx.astype(np.float64)
     ky = ky.astype(np.float64)
@@ -51,9 +53,9 @@ def sphFB_transform(vol, ell_max):
     vol_ft = finufft.nufft3d3(X,Y,Z,f,kx,ky,kz,isign=-1)
 
     # evaluate inner product 
-    r_unique, r_indices = np.unique(xr, return_inverse=True)
-    th_unique, th_indices = np.unique(xth, return_inverse=True)
-    ph_unique, ph_indices = np.unique(xph, return_inverse=True)
+    r_unique, r_indices = np.unique(_grid.rs, return_inverse=True)
+    th_unique, th_indices = np.unique(_grid.ths, return_inverse=True)
+    ph_unique, ph_indices = np.unique(_grid.phs, return_inverse=True)
 
     lpall = norm_assoc_legendre_all(ell_max, np.cos(th_unique))
     lpall /= np.sqrt(4*np.pi)
@@ -88,9 +90,9 @@ def sphFB_transform(vol, ell_max):
 
 def sphFB_eval(vol_coef, ell_max, k_max, r0, indices, grid):
 
-    r_unique, r_indices = np.unique(grid['rs'], return_inverse=True)
-    th_unique, th_indices = np.unique(grid['ths'], return_inverse=True)
-    ph_unique, ph_indices = np.unique(grid['phs'], return_inverse=True)
+    r_unique, r_indices = np.unique(grid.rs, return_inverse=True)
+    th_unique, th_indices = np.unique(grid.ths, return_inverse=True)
+    ph_unique, ph_indices = np.unique(grid.phs, return_inverse=True)
 
     lpall = norm_assoc_legendre_all(ell_max, np.cos(th_unique))
     lpall /= np.sqrt(4*np.pi)
@@ -135,9 +137,9 @@ def coef_t_vol(vol_coef, ell_max, n, k_max, r0, indices):
     assert nb == len(vol_coef), 'length of vector is wrong' 
 
     grid = get_3d_unif_grid(n)
-    X = 2*np.pi*grid['xs']
-    Y = 2*np.pi*grid['ys']
-    Z = 2*np.pi*grid['zs']
+    X = 2*np.pi*grid.xs
+    Y = 2*np.pi*grid.ys
+    Z = 2*np.pi*grid.zs
 
     X = X.astype(np.float64)
     Y = Y.astype(np.float64)
@@ -149,29 +151,20 @@ def coef_t_vol(vol_coef, ell_max, n, k_max, r0, indices):
     nph = int(1.5*n)
 
     c = 0.5
-    xr,xth,xph,w = get_3dballquad(nr,nth,nph,c)
-    kx = xr*np.sin(xth)*np.cos(xph)
-    ky = xr*np.sin(xth)*np.sin(xph)
-    kz = xr*np.cos(xth)
-
-    grid = {}
-    grid['rs'] = xr 
-    grid['ths'] = xth
-    grid['phs'] = xph
-    grid['xs'] = kx
-    grid['ys'] = ky 
-    grid['zs'] = kz 
-
+    _grid = get_3dballquad(nr,nth,nph,c)
+    kx = _grid.xs
+    ky = _grid.ys
+    kz = _grid.zs
 
     kx = kx.astype(np.float64)
     ky = ky.astype(np.float64)
     kz = kz.astype(np.float64)
 
     # evaluate 
-    vol_expand_ft = sphFB_eval(vol_coef, ell_max, k_max, r0, indices, grid)
+    vol_expand_ft = sphFB_eval(vol_coef, ell_max, k_max, r0, indices, _grid)
 
     # map into real domain 
-    f = vol_expand_ft*w 
+    f = vol_expand_ft*_grid.w 
     f = f.astype(np.complex128)
     vol_expand = finufft.nufft3d3(kx,ky,kz,f,X,Y,Z,isign=1)
     vol_expand = np.real(vol_expand).astype(np.float32)
@@ -182,66 +175,6 @@ def coef_t_vol(vol_coef, ell_max, n, k_max, r0, indices):
     
 
     
-def get_3dballquad(nr,nth,nph,R):
-    """
-    Get the quadrature rule under spherical coord in a ball of radius R such that 
-
-    \int_{||x||<=R} f dV  =  \sum_i w(i) * f(r(i),th(i),ph(i))  
-
-    :param nr: The order of discretization for radial part 
-    :param nth: The order of discretization for polar part 
-    :param nph: The order of discretization for azimuthal  part 
-    :param R: The radius of the ball 
-    :return: The quadrature points under spherical coordinate and the weights
-
-    """
-    [r,wr] = lgwt(nr,0,R)
-    [th,wth] = lgwt(nth,-1,1)
-    th = np.arccos(th)
-    ph = phis = 2*np.pi*np.arange(0,nph)/nph
-    wph = 2*np.pi*np.ones(nph)/nph
-
-
-    [r,th,ph] = np.meshgrid(r,th,ph,indexing='ij')
-    [wr,wth,wph] = np.meshgrid(wr,wth,wph,indexing='ij')
-
-    w = wr*wth*wph*(r**2)
-    w = w.flatten()
-
-    r = r.flatten()
-    th = th.flatten()
-    ph = ph.flatten()
-
-    return r,th,ph,w
-
-
-def get_3d_unif_grid(n):
-    """
-    Get the equispace quadrature points in 3D space 
-    :param n: The order of discretization in each dimension 
-    :return: The 3d grid points given in x,y,z of size n**3 for each 
-
-    """
-    if n%2==0:
-        x = np.arange(-n/2,n/2)
-    else:
-        x = np.arange(-(n-1)/2,(n-1)/2+1)
- 
-    [x,y,z] = np.meshgrid(x,x,x,indexing='ij')
-    r, th, ph = cart2sph(x, y, z)
-    grid = {}
-    grid['xs'] = x.flatten()
-    grid['ys'] = y.flatten()
-    grid['zs'] = z.flatten() 
-    grid['rs'] = r.flatten()
-    grid['ths'] = th.flatten()
-    grid['phs'] = ph.flatten() 
-
-    return grid
-
-    
-    
-
 
 
 def norm_assoc_legendre_all(nmax, x):
@@ -344,23 +277,3 @@ def calc_k_max(ell_max,nres,ndim):
 
 
 
-def cart2sph(x, y, z):
-    """
-    Convert Cartesian coordinates (x, y, z) to spherical coordinates (r, theta, phi).
-
-    Parameters:
-        x (float or array): x-coordinate(s)
-        y (float or array): y-coordinate(s)
-        z (float or array): z-coordinate(s)
-
-    Returns:
-        tuple: (r, theta, phi)
-            r (float or array): Radial distance
-            theta (float or array): Polar angle (in radians)
-            phi (float or array): Azimuthal angle (in radians)
-    """
-    r = np.sqrt(x**2 + y**2 + z**2)               # Radial distance
-    theta = np.zeros(r.shape)
-    theta = np.arccos(z[r!=0] / r[r!=0])         # Polar angle
-    phi = np.arctan2(y, x)                       # Azimuthal angle
-    return r, theta, phi
