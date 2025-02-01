@@ -1,61 +1,53 @@
 import numpy as np 
-from volume import *
+import numpy.linalg as LA 
+from utils import *
 from aspire.basis.basis_utils import lgwt
 
-def vMF_density(centers,w,kappa,grid):
-    """
-    Evaluate the von-Mises-Fisher density on a sphere 
-    :param centers: mx3 centers 
-    :param w: weights of length m
-    :param kappa: concentration parameter 
-    :param xs: nx3 locations on a sphere    
-    :return: The density at the n locations.
-    """
 
-    if kappa ==0:
-        # rs, ths, phs = cart2sph(xs[:,0],xs[:,1],xs[:,2])
-        return 1/(4*np.pi)
+
+def sample_vmf(N,centers,w,kappa,C=5.0):
     
-    xyz = grid.get_xyz_combined()
+    ncount = 0 
+    samples = np.zeros((N,3))
+    while ncount<N:
+        x = np.random.normal(0,1,size=(3,))
+        x /= LA.norm(x)
 
-    f = np.exp(kappa * centers @ xyz.T)
-    C = kappa/(2*np.pi*(np.exp(kappa)-np.exp(-kappa)))
-    f = C*f 
-    f = np.sum(np.diag(w) @ f, 0)
-    return f 
+        f = np.exp(kappa * centers @ x)
+        f /= (2*np.pi*(np.exp(kappa)-np.exp(-kappa)))
+        f = np.sum(np.diag(w) @ f)
 
-def wignerD(j, alpha, beta, gamma):
-    """
-    Evaluate the Wigner-D matrix of order j 
-    :param j: The order of angular momentum 
-    :param alpha: The first euler angle under zyz convention
-    :param beta: The second euler angle under zyz convention
-    :param gamma: The third euler angle under zyz convention
-    :return: The (2j+1)x(2j+1) complex orthornormal Wigner-D matrix
-    """
-    fctrl = np.ones(2*j+1)
-    for i in range(1,2*j+1):
-        fctrl[i] = fctrl[i-1]*i 
+        u = np.random.uniform(0,1,1)[0] 
+        if u<f/C:
+            samples[ncount,:] = x 
+            ncount += 1 
+
+    return samples 
+
+
+def sample_sph_coef(N, spham_coef, ell_max_half, C=5.0):
+
     
-    Dj = np.zeros([2*j+1,2*j+1], dtype=np.complex128)
+    samples = np.zeros((N,3))
+    ell_max = 2*ell_max_half
 
-    eps = np.finfo(np.float32).eps
-    if beta < eps:
-        Dj = np.diag(np.exp(-1j*(alpha+gamma)*np.arange(-j,j+1))) 
-    else:
-        for mp in range(-j,j+1):
-            for m in range(-j,j+1):
-                s = np.arange(max(0,m-mp), min(j+m,j-mp)+1).T 
-                m1_t = (-1)**s
-                fact_t = fctrl[j+mp]*fctrl[j-mp]*fctrl[j+m]*fctrl[j-m]
-                fact_t = np.sqrt(fact_t)
-                fact_t = fact_t/(fctrl[j+m-s]*fctrl[mp-m+s]*fctrl[j-mp-s]*fctrl[s])
-                cos_beta = np.cos(beta/2)**(2*j+m-mp-2*s)
-                sin_beta = np.sin(beta/2)**(mp-m+2*s)
-                d_l_mn = (-1)**(mp-m)*np.sum(m1_t*fact_t*cos_beta*sin_beta)
-                Dj[mp+j,m+j] = np.exp(-1j*alpha*mp)*d_l_mn*np.exp(-1j*gamma*m) 
-        
-    return Dj
+    ncount = 0 
+    while ncount<N:
+        x = np.random.normal(0,1,size=(3,N))
+        grid = Grid_3d(type='euclid', xs=x[0,:], ys=x[1,:], zs=x[2,:])
+        fs = sph_harm_eval(spham_coef, ell_max_half, grid)
+        ratios = fs/C 
+
+        for i in range(N):
+            u = np.random.uniform(0,1,1)[0] 
+            if u<ratios[i]:
+                samples[ncount,:] = x[:,i]
+                ncount += 1 
+
+                if ncount == N:
+                    break  
+    return samples
+    
 
 def wignerD_transform(fun, ell_max):
     
@@ -99,9 +91,13 @@ def wignerD_transform(fun, ell_max):
     return coef, indices
 
 
-def sph_harm_transform(fun, ell_max):
+def full_sph_harm_transform(fun, ell_max):
     
-    ths, phs, w = get_spherequad(ell_max+1, 2*ell_max+1)
+    grid = get_spherequad(ell_max+1, 2*ell_max+1)
+
+    ths = grid.ths 
+    phs = grid.phs 
+    w = grid.w
 
     ths_unique, ths_indices = np.unique(ths, return_inverse=True)
     phs_unique, phs_indices = np.unique(phs, return_inverse=True)
@@ -133,7 +129,14 @@ def sph_harm_transform(fun, ell_max):
     return coef, indices
 
 
-def sph_ham_coef_eval(spham_coef, indices, ell_max, grid):
+def full_sph_harm_eval(sph_coef, ell_max, grid):
+    
+    indices = {}
+    n_coef = 0 
+    for ell in np.arange(ell_max+1):
+        for m in range(-ell, ell+1):
+            indices[(ell,m)] = n_coef 
+            n_coef += 1
     
     ths = grid.ths
     phs = grid.phs
@@ -155,33 +158,178 @@ def sph_ham_coef_eval(spham_coef, indices, ell_max, grid):
             exps = exp_all[m+ell_max,:]
             if m<0:
                 lpmn = lpmn*(-1)**m
-            evals += spham_coef[indices[(ell,m)]]*lpmn[ths_indices]*exps[phs_indices]
+            evals += sph_coef[indices[(ell,m)]]*lpmn[ths_indices]*exps[phs_indices]
     
     return evals
             
+def sph_harm_transform(fun, ell_max_half):
+    
+    ell_max = 2*ell_max_half
+    
+    grid = get_spherequad(ell_max+1, 2*ell_max+1)
 
-def Rz(th):
-    """
-    Rotation around the z axis 
-    :param th: The rotation angle 
-    :return: The 3x3 rotation matrix rotating a vector around z axis by th
-    """
-    return np.array([
-        [np.cos(th), -np.sin(th), 0], 
-        [np.sin(th), np.cos(th), 0],
-        [0, 0, 1]
-    ])
+    ths = grid.ths 
+    phs = grid.phs 
+    w = grid.w 
+
+    ths_unique, ths_indices = np.unique(ths, return_inverse=True)
+    phs_unique, phs_indices = np.unique(phs, return_inverse=True)
+
+    lpall = norm_assoc_legendre_all(ell_max, np.cos(ths_unique))
+    lpall /= np.sqrt(4*np.pi)
+
+    exp_all = np.zeros((2*ell_max+1,len(phs_unique)), dtype=complex)
+    for m in range(-ell_max,ell_max+1):
+        exp_all[m+ell_max,:] = np.exp(1j*m*phs_unique)
+
+    f = np.zeros(len(w),dtype=np.complex128)
+    for i in range(len(w)):
+        f[i] = fun(ths[i],phs[i])
+
+    
+    n_coef = 0 
+    indices = {}
+    for ell in np.arange(ell_max+1):
+        if ell % 2 == 0:
+          for m in range(-ell, ell+1):
+              indices[(ell,m)] = n_coef 
+              n_coef += 1
+              
+    coef = np.zeros(n_coef, dtype=np.complex128)
+    for ell in range(0,ell_max+1):
+        if ell % 2 == 0:
+          for m in range(-ell,ell+1):
+              lpmn = lpall[ell,abs(m),:]
+              exps = exp_all[m+ell_max,:]
+              if m<0:
+                  lpmn = lpmn*(-1)**m
+              coef[indices[(ell,m)]] += np.sum(np.conj(lpmn[ths_indices]*exps[phs_indices])*w*f)
+
+                
+    return coef, indices
 
 
-def Ry(th):
+
+def sph_harm_eval(spham_coef, ell_max_half, grid):
+    
+    ell_max = 2*ell_max_half
+    indices = {}
+    n_coef = 0 
+    for ell in np.arange(ell_max+1):
+        if ell % 2 == 0:
+          for m in range(-ell, ell+1):
+              indices[(ell,m)] = n_coef 
+              n_coef += 1
+    
+    ths = grid.ths
+    phs = grid.phs
+
+    ths_unique, ths_indices = np.unique(ths, return_inverse=True)
+    phs_unique, phs_indices = np.unique(phs, return_inverse=True)
+
+    lpall = norm_assoc_legendre_all(ell_max, np.cos(ths_unique))
+    lpall /= np.sqrt(4*np.pi)
+
+    exp_all = np.zeros((2*ell_max+1,len(phs_unique)), dtype=complex)
+    for m in range(-ell_max,ell_max+1):
+        exp_all[m+ell_max,:] = np.exp(1j*m*phs_unique)
+
+    evals = 0
+    for ell in range(0,ell_max+1):
+        if ell % 2 ==0:
+          for m in range(-ell,ell+1):
+              lpmn = lpall[ell,abs(m),:]
+              exps = exp_all[m+ell_max,:]
+              if m<0:
+                  lpmn = lpmn*(-1)**m
+              evals += spham_coef[indices[(ell,m)]]*lpmn[ths_indices]*exps[phs_indices]
+    
+    return evals
+
+
+def get_sph_r_t_c_mat(ell_max_half):
+    
+    ell_max = 2*ell_max_half
+    n_coef = 0 
+    indices = {}
+    for ell in np.arange(ell_max+1):
+        if ell % 2 == 0:
+          for m in range(-ell, ell+1):
+              indices[(ell,m)] = n_coef 
+              n_coef += 1
+
+    sph_r_t_c = np.zeros((n_coef, n_coef), dtype=np.complex128)
+    for ell in range(ell_max+1):
+        if ell % 2 == 0:
+            for m in range(-ell,ell+1):
+                i = indices[(ell,m)]
+                _i = indices[(ell,-m)]
+                if m==0:
+                    sph_r_t_c[i,i] = 1 
+                elif m>0:
+                    sph_r_t_c[i,i] = 1 
+                    sph_r_t_c[i,_i] = (-1)**m*1j 
+                else:
+                    sph_r_t_c[i,i] = -1j 
+                    sph_r_t_c[i,_i] = (-1)**m
+    
+    sph_c_t_r = LA.inv(sph_r_t_c)
+
+    return sph_r_t_c, sph_c_t_r 
+
+
+def sph_t_rot_coef(sph_coef, ell_max_half):
+    
+    ell_max = 2*ell_max_half
+    n_coef = 0 
+    indices = {}
+    for ell in np.arange(ell_max+1):
+        if ell % 2 == 0:
+          for m in range(-ell, ell+1):
+              indices[(ell,m)] = n_coef 
+              n_coef += 1
+
+    rot_coef = np.zeros(sph_coef.shape, dtype=np.complex128)
+    for ell in range(ell_max+1):
+        if ell % 2 ==0:
+            for m in range(-ell,ell+1):
+                rot_coef[indices[(ell,m)]] = (-1)**m*sph_coef[indices[(ell,-m)]]/np.sqrt(4*np.pi/(2*ell+1))
+
+    return rot_coef
+
+
+def precompute_rot_density(rot_coef, ell_max_half, euler_nodes):
     """
-    Rotation around the y axis 
-    :param th: The rotation angle 
-    :return: The 3x3 rotation matrix rotating a vector around y axis by th
-    """    
-    return np.array([
-        [np.cos(th), 0, np.sin(th)], 
-        [0, 1, 0],
-        [-np.sin(th), 0, np.cos(th)]
-    ])
+    precompute Psi[i,(l,m)] = Dl_{m,0}(Ri) 
+    """
+    ell_max = 2*ell_max_half
+    n_coef = 0 
+    indices = {}
+    for ell in np.arange(ell_max+1):
+        if ell % 2 == 0:
+          for m in range(-ell, ell+1):
+              indices[(ell,m)] = n_coef 
+              n_coef += 1
+
+    n_nodes = euler_nodes.shape[0]
+    Psi = np.zeros([n_nodes, n_coef], dtype=np.complex128)
+
+    for i in range(n_nodes):
+        
+        alpha = euler_nodes[i,0]
+        beta = euler_nodes[i,1]
+        gamma = euler_nodes[i,2]
+
+        for ell in range(ell_max+1):
+            if ell % 2 == 0:
+                Dl = wignerD(ell,alpha,beta,gamma)
+                for m in range(-ell, ell+1):
+                    Psi[i,indices[(ell,m)]] = Dl[m+ell,ell]
+    
+    return Psi
+
+    
+    
+    
+
 

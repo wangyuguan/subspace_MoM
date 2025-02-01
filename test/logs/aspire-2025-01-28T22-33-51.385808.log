@@ -1,0 +1,27 @@
+2025-01-28 22:33:51,386 DEBUG [root] ASPIRE configuration directory is /Users/yuguan/.config/ASPIRE
+2025-01-28 22:33:51,386 DEBUG [root] ASPIRE configuration resolution details [({'logging': {'log_dir': '/Users/yuguan/Dropbox/code/subspace_MoM/test/logs'}}, ConfigSource(<super: <class 'ConfigSource'>, <ConfigSource object>>, None, False, False)), ({}, ConfigSource(<super: <class 'ConfigSource'>, <YamlSource object>>, '/Users/yuguan/.config/ASPIRE/config.yaml', False, False)), ({'version': '0.13.1', 'common': OrderedDict([('numeric', 'numpy'), ('fft', 'scipy'), ('cache_dir', '')]), 'logging': OrderedDict([('log_dir', 'logs'), ('log_exceptions', 1), ('tqdm_disable', False), ('console_level', 'INFO'), ('log_file_level', 'DEBUG'), ('log_prefix', 'aspire')]), 'nufft': OrderedDict([('backends', ['cufinufft', 'finufft', 'pynfft'])])}, ConfigSource(<super: <class 'ConfigSource'>, <YamlSource object>>, '/Users/yuguan/Dropbox/code/ASPIRE-Python/src/aspire/config_default.yaml', True, False))]
+2025-01-28 22:33:51,387 DEBUG [root] Resolved config.yaml:
+
+logging:
+    log_dir: /Users/yuguan/Dropbox/code/subspace_MoM/test/logs
+    log_exceptions: 1
+    tqdm_disable: no
+    console_level: INFO
+    log_file_level: DEBUG
+    log_prefix: aspire
+version: 0.13.1
+common:
+    numeric: numpy
+    fft: scipy
+    cache_dir: ''
+
+nufft:
+    backends: [cufinufft, finufft, pynfft]
+
+
+2025-01-28 22:33:51,528 DEBUG [matplotlib] matplotlib data path: /opt/anaconda3/envs/aspire/lib/python3.9/site-packages/matplotlib/mpl-data
+2025-01-28 22:33:51,533 DEBUG [matplotlib] CONFIGDIR=/Users/yuguan/.matplotlib
+2025-01-28 22:33:51,567 DEBUG [matplotlib] interactive is False
+2025-01-28 22:33:51,567 DEBUG [matplotlib] platform is darwin
+2025-01-28 22:33:51,597 DEBUG [matplotlib] CACHEDIR=/Users/yuguan/.matplotlib
+2025-01-28 22:33:51,600 DEBUG [matplotlib.font_manager] Using fontManager instance from /Users/yuguan/.matplotlib/fontlist-v390.json

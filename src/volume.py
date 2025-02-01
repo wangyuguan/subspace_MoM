@@ -5,6 +5,9 @@ from aspire.basis.basis_utils import all_besselj_zeros, lgwt
 from scipy.special import spherical_jn
 from utils import *
 
+
+
+
 def sphFB_transform(vol, ell_max):
     """
     Project the volume into spherical Bessel basis 
@@ -64,6 +67,9 @@ def sphFB_transform(vol, ell_max):
     for m in range(-ell_max,ell_max+1):
         exp_all[m+ell_max,:] = np.exp(1j*m*ph_unique)
 
+    # lpall = jnp.asarray(lpall)
+    # exp_all = jnp.asarray(exp_all)
+
     indices = {}
 
     i = 0 
@@ -119,6 +125,44 @@ def sphFB_eval(vol_coef, ell_max, k_max, r0, indices, grid):
                 vol += vol_coef[indices[ell,k,m]]*js[r_indices]*lpmn[th_indices]*exps[ph_indices]
     
     return vol 
+
+
+def precompute_sphFB_basis(ell_max, k_max, r0, indices, grid):
+    """
+    precompute Phi[(l,k,m),i] = Ri^T phi_{l,k,m} (r_i,th_i,ph_i) 
+    """
+
+    n_coef = len(indices)
+    n_grid = len(grid.rs)
+    r_unique, r_indices = np.unique(grid.rs, return_inverse=True)
+    th_unique, th_indices = np.unique(grid.ths, return_inverse=True)
+    ph_unique, ph_indices = np.unique(grid.phs, return_inverse=True)
+
+    lpall = norm_assoc_legendre_all(ell_max, np.cos(th_unique))
+    lpall /= np.sqrt(4*np.pi)
+
+    exp_all = np.zeros((2*ell_max+1,len(ph_unique)), dtype=complex)
+    for m in range(-ell_max,ell_max+1):
+        exp_all[m+ell_max,:] = np.exp(1j*m*ph_unique)
+
+    vol = 0 
+    c = 0.5  
+    Phi = np.zeros([n_grid,n_coef], dtype=np.complex128)
+    for ell in range(0,ell_max+1):
+        for k in range(0,k_max[ell]):
+            z0k = r0[ell][k]
+            js = spherical_jn(ell, r_unique*z0k/c)
+            djs = spherical_jn(ell, z0k, True)
+            js = js*np.sqrt(2/c**3)/abs(djs)
+            js[r_unique>c] = 0
+
+            for m in range(-ell,ell+1):
+                lpmn = lpall[ell,abs(m),:]
+                if m<0:
+                    lpmn = (-1)**m * lpmn 
+                exps = exp_all[m+ell_max,:]
+                Phi[:,indices[(ell,k,m)]] =  js[r_indices]*lpmn[th_indices]*exps[ph_indices]
+    return Phi
 
 
 
@@ -177,64 +221,45 @@ def coef_t_vol(vol_coef, ell_max, n, k_max, r0, indices):
     
 
 
-def norm_assoc_legendre_all(nmax, x):
-    """
-    Evaluate the normalized associated Legendre polynomial
-    as  Ynm(x) = sqrt(2n+1)  sqrt( (n-m)!/ (n+m)! ) Pnm(x)
-        for n=0,...,nmax and m=0,...,n
-    :param j: The order of the associated Legendre polynomial
-    :param x: A 1D array of values between -1 and +1 on which to evaluate.
-    :return: The normalized associated Legendre polynomial evaluated at corresponding x.
-
-    """
-
-    x = x.flatten()
-    nx = len(x)
-    y = np.zeros((nmax+1,nmax+1,nx))
-
-    u = -np.sqrt((1-x)*(1+x))
-    y[0,0,:] = 1 
-
-    for m in range(0,nmax+1):
-        if m>0:
-            y[m,m,:] = y[m-1,m-1,:]*u*np.sqrt((2.0*m-1)/(2.0*m))
-        if m<nmax:
-            y[m+1,m,:] = x*y[m,m,:]*np.sqrt((2.0*m+1)) 
-
-        for n in range(m+2,nmax+1):
-            y[n,m,:] = ((2*n-1)*x*y[n-1,m,:]-np.sqrt((n+m-1)*(n-m-1))*y[n-2,m,:])/np.sqrt((n-m)*(n+m))
-        
-    for n in range(0,nmax+1):
-        for m in range(0,n+1):
-            y[n,m,:] = y[n,m,:]*np.sqrt(2*n+1.0)
-
-    return y
-
-
-
-def get_vol_r_t_c_mat(ell_max, k_max, indices):
+def get_sphFB_r_t_c_mat(ell_max, k_max, indices):
     nb = sum(k_max * (2 * np.arange(0, ell_max + 1) + 1))
 
-    vol_r_t_c = np.zeros([nb,nb], dtype=np.complex128)
-    vol_c_t_r = np.zeros([nb,nb], dtype=np.complex128)
+    sphFB_r_t_c = np.zeros([nb,nb], dtype=np.complex128)
+    sphFB_c_t_r = np.zeros([nb,nb], dtype=np.complex128)
 
     i = 0
-    for ell in range(0,ell_max+1):
-        for k in range(0,k_max[ell]):
+    for ell in range(ell_max+1):
+        for k in range(k_max[ell]):
             for m in range(-ell,ell+1):
                 if m>0:
-                    vol_r_t_c[i,i] = 1
-                    vol_r_t_c[i,indices[(ell,k,-m)]] = -1j*((-1)**(ell+m))
+                    sphFB_r_t_c[i,i] = 1
+                    sphFB_r_t_c[i,indices[(ell,k,-m)]] = -1j*((-1)**(ell+m))
                 elif m==0:
-                    vol_r_t_c[i,i] = 1j**ell 
+                    sphFB_r_t_c[i,i] = 1j**ell 
                 else:
-                    vol_r_t_c[i,i] = 1j 
-                    vol_r_t_c[i,indices[(ell,k,-m)]] = (-1)**(ell+m)
+                    sphFB_r_t_c[i,i] = 1j 
+                    sphFB_r_t_c[i,indices[(ell,k,-m)]] = (-1)**(ell+m)
                 i += 1 
                 
-    vol_c_t_r = LA.inv(vol_r_t_c)
+    sphFB_c_t_r = LA.inv(sphFB_r_t_c)
                 
-    return vol_r_t_c, vol_c_t_r
+    return sphFB_r_t_c, sphFB_c_t_r
+
+
+
+def rotate_sphFB(vol_coef, ell_max, k_max, indices, euler_angles):
+    
+    vol_coef_rot = np.zeros(vol_coef.shape, dtype=np.complex128)
+    alpha, beta, gamma = euler_angles
+
+    for ell in range(0,ell_max+1):
+        Dl = wignerD(ell,alpha,beta,gamma)
+        for k in range(0,k_max[ell]):
+            istart = indices[(ell,k,-ell)]
+            iend = indices[(ell,k,ell)]
+            vol_coef_rot[istart:iend+1] = np.conj(Dl).T @ vol_coef[istart:iend+1]
+
+    return vol_coef_rot
 
 def calc_k_max(ell_max,nres,ndim):
     """
