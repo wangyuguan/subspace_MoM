@@ -4020,3 +4020,7 @@ nufft:
 2025-01-31 22:46:36,233 DEBUG [matplotlib.colorbar] locator: <matplotlib.ticker.AutoLocator object at 0x7f13eba8fa00>
 2025-01-31 22:46:36,487 DEBUG [matplotlib.colorbar] locator: <matplotlib.ticker.AutoLocator object at 0x7f13dc0ac7c0>
 2025-01-31 22:46:36,493 DEBUG [matplotlib.colorbar] locator: <matplotlib.ticker.AutoLocator object at 0x7f13dc069fa0>
+2025-01-31 23:06:00,087 DEBUG [matplotlib.colorbar] locator: <matplotlib.ticker.AutoLocator object at 0x7f13ebd9f430>
+2025-01-31 23:06:00,093 DEBUG [matplotlib.colorbar] locator: <matplotlib.ticker.AutoLocator object at 0x7f13eb9f7280>
+2025-01-31 23:06:00,373 DEBUG [matplotlib.colorbar] locator: <matplotlib.ticker.AutoLocator object at 0x7f13f2ec6d60>
+2025-01-31 23:06:00,380 DEBUG [matplotlib.colorbar] locator: <matplotlib.ticker.AutoLocator object at 0x7f13f2ec9eb0>

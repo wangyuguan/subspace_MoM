@@ -298,35 +298,35 @@ def sph_t_rot_coef(sph_coef, ell_max_half):
     return rot_coef
 
 
-def precompute_rot_density(rot_coef, ell_max_half, euler_nodes):
-    """
-    precompute Psi[i,(l,m)] = Dl_{m,0}(Ri) 
-    """
-    ell_max = 2*ell_max_half
-    n_coef = 0 
-    indices = {}
-    for ell in np.arange(ell_max+1):
-        if ell % 2 == 0:
-          for m in range(-ell, ell+1):
-              indices[(ell,m)] = n_coef 
-              n_coef += 1
+# def precompute_rot_density(rot_coef, ell_max_half, euler_nodes):
+#     """
+#     precompute Psi[i,(l,m)] = Dl_{m,0}(Ri) 
+#     """
+#     ell_max = 2*ell_max_half
+#     n_coef = 0 
+#     indices = {}
+#     for ell in np.arange(ell_max+1):
+#         if ell % 2 == 0:
+#           for m in range(-ell, ell+1):
+#               indices[(ell,m)] = n_coef 
+#               n_coef += 1
 
-    n_nodes = euler_nodes.shape[0]
-    Psi = np.zeros([n_nodes, n_coef], dtype=np.complex128)
+#     n_nodes = euler_nodes.shape[0]
+#     Psi = np.zeros([n_nodes, n_coef], dtype=np.complex128)
 
-    for i in range(n_nodes):
+#     for i in range(n_nodes):
         
-        alpha = euler_nodes[i,0]
-        beta = euler_nodes[i,1]
-        gamma = euler_nodes[i,2]
+#         alpha = euler_nodes[i,0]
+#         beta = euler_nodes[i,1]
+#         gamma = euler_nodes[i,2]
 
-        for ell in range(ell_max+1):
-            if ell % 2 == 0:
-                Dl = wignerD(ell,alpha,beta,gamma)
-                for m in range(-ell, ell+1):
-                    Psi[i,indices[(ell,m)]] = Dl[m+ell,ell]
+#         for ell in range(ell_max+1):
+#             if ell % 2 == 0:
+#                 Dl = wignerD(ell,alpha,beta,gamma)
+#                 for m in range(-ell, ell+1):
+#                     Psi[i,indices[(ell,m)]] = Dl[m+ell,ell]
     
-    return Psi
+#     return Psi
 
     
     
