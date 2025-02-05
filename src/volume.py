@@ -73,8 +73,8 @@ def sphFB_transform(vol, ell_max):
     indices = {}
 
     i = 0 
-    for ell in range(0,ell_max+1):
-        for k in range(0,k_max[ell]):
+    for ell in range(ell_max+1):
+        for k in range(k_max[ell]):
             z0k = r0[ell][k]
             js = spherical_jn(ell, r_unique*z0k/c)
             djs = spherical_jn(ell, z0k, True)
@@ -109,8 +109,8 @@ def sphFB_eval(vol_coef, ell_max, k_max, r0, indices, grid):
 
     vol = 0 
     c = 0.5  
-    for ell in range(0,ell_max+1):
-        for k in range(0,k_max[ell]):
+    for ell in range(ell_max+1):
+        for k in range(k_max[ell]):
             z0k = r0[ell][k]
             js = spherical_jn(ell, r_unique*z0k/c)
             djs = spherical_jn(ell, z0k, True)
@@ -127,42 +127,42 @@ def sphFB_eval(vol_coef, ell_max, k_max, r0, indices, grid):
     return vol 
 
 
-# def precompute_sphFB_basis(ell_max, k_max, r0, indices, grid):
-#     """
-#     precompute Phi[(l,k,m),i] = Ri^T phi_{l,k,m} (r_i,th_i,ph_i) 
-#     """
+def precompute_sphFB_basis(ell_max, k_max, r0, indices, grid):
+    """
+    precompute Phi[(l,k,m),i] = Ri^T phi_{l,k,m} (r_i,th_i,ph_i) 
+    """
 
-#     n_coef = len(indices)
-#     n_grid = len(grid.rs)
-#     r_unique, r_indices = np.unique(grid.rs, return_inverse=True)
-#     th_unique, th_indices = np.unique(grid.ths, return_inverse=True)
-#     ph_unique, ph_indices = np.unique(grid.phs, return_inverse=True)
+    n_coef = len(indices)
+    n_grid = len(grid.rs)
+    r_unique, r_indices = np.unique(grid.rs, return_inverse=True)
+    th_unique, th_indices = np.unique(grid.ths, return_inverse=True)
+    ph_unique, ph_indices = np.unique(grid.phs, return_inverse=True)
 
-#     lpall = norm_assoc_legendre_all(ell_max, np.cos(th_unique))
-#     lpall /= np.sqrt(4*np.pi)
+    lpall = norm_assoc_legendre_all(ell_max, np.cos(th_unique))
+    lpall /= np.sqrt(4*np.pi)
 
-#     exp_all = np.zeros((2*ell_max+1,len(ph_unique)), dtype=complex)
-#     for m in range(-ell_max,ell_max+1):
-#         exp_all[m+ell_max,:] = np.exp(1j*m*ph_unique)
+    exp_all = np.zeros((2*ell_max+1,len(ph_unique)), dtype=complex)
+    for m in range(-ell_max,ell_max+1):
+        exp_all[m+ell_max,:] = np.exp(1j*m*ph_unique)
 
-#     vol = 0 
-#     c = 0.5  
-#     Phi = np.zeros([n_grid,n_coef], dtype=np.complex128)
-#     for ell in range(0,ell_max+1):
-#         for k in range(0,k_max[ell]):
-#             z0k = r0[ell][k]
-#             js = spherical_jn(ell, r_unique*z0k/c)
-#             djs = spherical_jn(ell, z0k, True)
-#             js = js*np.sqrt(2/c**3)/abs(djs)
-#             js[r_unique>c] = 0
+    vol = 0 
+    c = 0.5  
+    Phi = np.zeros([n_grid,n_coef], dtype=np.complex128)
+    for ell in range(0,ell_max+1):
+        for k in range(0,k_max[ell]):
+            z0k = r0[ell][k]
+            js = spherical_jn(ell, r_unique*z0k/c)
+            djs = spherical_jn(ell, z0k, True)
+            js = js*np.sqrt(2/c**3)/abs(djs)
+            js[r_unique>c] = 0
 
-#             for m in range(-ell,ell+1):
-#                 lpmn = lpall[ell,abs(m),:]
-#                 if m<0:
-#                     lpmn = (-1)**m * lpmn 
-#                 exps = exp_all[m+ell_max,:]
-#                 Phi[:,indices[(ell,k,m)]] =  js[r_indices]*lpmn[th_indices]*exps[ph_indices]
-#     return Phi
+            for m in range(-ell,ell+1):
+                lpmn = lpall[ell,abs(m),:]
+                if m<0:
+                    lpmn = (-1)**m * lpmn 
+                exps = exp_all[m+ell_max,:]
+                Phi[:,indices[(ell,k,m)]] =  js[r_indices]*lpmn[th_indices]*exps[ph_indices]
+    return Phi
 
 
 
