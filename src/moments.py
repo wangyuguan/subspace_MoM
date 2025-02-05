@@ -7,7 +7,9 @@ from jax.numpy.linalg import norm
 from utils import * 
 from viewing_direction import * 
 from volume import * 
-import time 
+import e3x
+import scipy 
+from scipy.optimize import minimize
 
 
 def coef_t_subspace_moments(vol_coef, ell_max_vol, k_max, r0, indices_vol, rot_coef, ell_max_half_view, opts):
@@ -50,7 +52,11 @@ def coef_t_subspace_moments(vol_coef, ell_max_vol, k_max, r0, indices_vol, rot_c
         fft_Img = fft_Img.reshape(-1,1)
         M2 += (weights[i]*rot_density[i]*fft_Img) @ (np.conj(fft_Img).T @ G)
 
-    U2, S2, Vh2 = LA.svd(M2, full_matrices=False)
+    U2, S2, _ = LA.svd(M2, full_matrices=False)
+    cumulative_energy = np.cumsum(S2**2) / np.sum(S2**2)
+    r2 = np.argmax(cumulative_energy > (1 - tol2)) + 1
+    U2 = U2[:,1:r2]
+
 
     m2 = 0 
     for i in range(len(weights)):
@@ -75,7 +81,12 @@ def coef_t_subspace_moments(vol_coef, ell_max_vol, k_max, r0, indices_vol, rot_c
         fft_Img = fft_Img.reshape(-1,1)
         M3 += (weights[i]*rot_density[i]*fft_Img) @ ((np.conj(fft_Img).T @ G1) * (np.conj(fft_Img).T @ G2))
 
-    U3, S3, Vh3 = LA.svd(M3, full_matrices=False)
+    U3, S3, _ = LA.svd(M3, full_matrices=False)
+    cumulative_energy = np.cumsum(S3**2) / np.sum(S3**2)
+    r3 = np.argmax(cumulative_energy > (1 - tol3)) + 1
+    U3 = U3[:,1:r3]
+
+
     m3 = 0
     for i in range(len(weights)):
         vol_coef_rot = rotate_sphFB(vol_coef, ell_max_vol, k_max, indices_vol, euler_nodes[i,:])
@@ -96,22 +107,51 @@ def coef_t_subspace_moments(vol_coef, ell_max_vol, k_max, r0, indices_vol, rot_c
     subMoMs['m3'] = m3 
     subMoMs['U2'] = U2 
     subMoMs['U3'] = U3 
+    subMoMs['S2'] = S2
+    subMoMs['S3'] = S3
     return subMoMs
 
 
-def find_cost_grad(a, b, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3):
+def moment_LS(x0, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, A_constr, b_constr, l1=None, l2=None, l3=None):
     
-    _, w_so3 = quadrature_rules['m2']
+    if l1 is None:
+        l1 = LA.norm(m1_emp.flatten())**2
+    if l2 is None:
+        l2 = LA.norm(m2_emp.flatten())**2
+    if l3 is None:
+        l3 = LA.norm(m3_emp.flatten())**2
+    
+    linear_constraint = {'type': 'ineq', 'fun': lambda x: b_constr - A_constr @ x}
+    objective = lambda x: find_cost_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3)
+    result = minimize(objective, x0, method='SLSQP', jac=True, constraints=[linear_constraint])
+
+    return result 
+
+
+def find_cost_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3):
+    
+    _, w_so3_m2 = quadrature_rules['m2']
+    _, w_so3_m3 = quadrature_rules['m3']
     Phi = Phi_precomps['m2']
     Psi = Psi_precomps['m3']
 
     # covert to jax array 
-    a, b, w_so3 = jnp.array(a), jnp.array(b), jnp.array(w_so3)
+    x, w_so3 = jnp.array(x), jnp.array(w_so3)
 
     # compute the cost and gradient from the three moments
-    cost1, grad1 = find_cost_grad_m1(a, b, w_so3, Phi, Psi, m1_emp, l1)
-    cost2, grad2 = find_cost_grad_m2(a, b, w_so3, Phi, Psi, m2_emp, l2)
-    cost3, grad3 = find_cost_grad_m3(a, b, w_so3, Phi, Psi, m3_emp, l3)
+    if l1>0:
+      cost1, grad1 = find_cost_grad_m1(x, w_so3_m2, Phi, Psi, m1_emp, l1)
+    else:
+        cost1, grad1 = 0, np.zeros(x.shape)
+    if l2>0:
+      cost2, grad2 = find_cost_grad_m2(x, w_so3_m2, Phi, Psi, m2_emp, l2)
+    else:
+        cost1, grad1 = 0, np.zeros(x.shape)
+    if l3>0:
+      cost3, grad3 = find_cost_grad_m3(x, w_so3_m3, Phi, Psi, m3_emp, l3)
+    else:
+        cost1, grad1 = 0, np.zeros(x.shape)
+
     cost = cost1+cost2+cost3 
     grad = grad1+grad2+grad3 
     return np.array(cost), np.array(grad)
@@ -519,3 +559,45 @@ def precomp_wignerD_all(ell_max_half, euler_nodes):
     Psi_precomp = np.real(Psi_precomp @ sph_r_t_c)
     
     return jnp.array(Psi_precomp)
+
+
+
+def get_linear_ineqn_constraint(ell_max_half):
+    
+    ell_max = 2*ell_max_half
+    n_coef = 0 
+    indices = {}
+    for ell in np.arange(ell_max+1):
+        if ell % 2 == 0:
+          for m in range(-ell, ell+1):
+              indices[(ell,m)] = n_coef 
+              n_coef += 1
+
+    data = np.genfromtxt('../data/sphere_rules/N030_M322_C4.dat',skip_header=2)
+    nodes = data[:,0:3]
+    _, betas, alphas = cart2sph(nodes[:,0], nodes[:,1], nodes[:,2])
+    n_nodes = nodes.shape[0]
+
+    lpall = norm_assoc_legendre_all(ell_max, np.cos(betas))
+    lpall /= np.sqrt(4*np.pi)
+
+    exp_all = np.zeros((2*ell_max+1,len(alphas)), dtype=complex)
+    for m in range(-ell_max,ell_max+1):
+        exp_all[m+ell_max,:] = np.exp(1j*m*alphas)
+
+    sph_r_t_c, _  = get_sph_r_t_c_mat(ell_max_half)
+    Psi = np.zeros((n_nodes, n_coef), dtype=np.complex128)
+    for ell in range(0,ell_max+1):
+        if ell % 2 ==0:
+          for m in range(-ell,ell+1):
+              lpmn = lpall[ell,abs(m),:]
+              exps = exp_all[m+ell_max,:]
+              if m<0:
+                  lpmn = lpmn*(-1)**m
+              ylm = lpmn*exps*np.sqrt(4*np.pi/(2*ell+1))
+              ylm = np.conj(ylm)
+              Psi[:,indices[(ell,m)]] = ylm 
+    Psi = Psi @ sph_r_t_c
+    A = -Psi[:,1:]
+    b = Psi[:,0]
+    return np.real(A), np.real(b), Psi 

@@ -1,0 +1,28 @@
+2025-02-04 23:29:36,192 DEBUG [root] ASPIRE configuration directory is /Users/yuguan/.config/ASPIRE
+2025-02-04 23:29:36,192 DEBUG [root] ASPIRE configuration resolution details [({'logging': {'log_dir': '/Users/yuguan/Dropbox/code/subspace_MoM/test/logs'}}, ConfigSource(<super: <class 'ConfigSource'>, <ConfigSource object>>, None, False, False)), ({}, ConfigSource(<super: <class 'ConfigSource'>, <YamlSource object>>, '/Users/yuguan/.config/ASPIRE/config.yaml', False, False)), ({'version': '0.13.1', 'common': OrderedDict([('numeric', 'numpy'), ('fft', 'scipy'), ('cache_dir', '')]), 'logging': OrderedDict([('log_dir', 'logs'), ('log_exceptions', 1), ('tqdm_disable', False), ('console_level', 'INFO'), ('log_file_level', 'DEBUG'), ('log_prefix', 'aspire')]), 'nufft': OrderedDict([('backends', ['cufinufft', 'finufft', 'pynfft'])])}, ConfigSource(<super: <class 'ConfigSource'>, <YamlSource object>>, '/Users/yuguan/Dropbox/code/ASPIRE-Python/src/aspire/config_default.yaml', True, False))]
+2025-02-04 23:29:36,193 DEBUG [root] Resolved config.yaml:
+
+logging:
+    log_dir: /Users/yuguan/Dropbox/code/subspace_MoM/test/logs
+    log_exceptions: 1
+    tqdm_disable: no
+    console_level: INFO
+    log_file_level: DEBUG
+    log_prefix: aspire
+version: 0.13.1
+common:
+    numeric: numpy
+    fft: scipy
+    cache_dir: ''
+
+nufft:
+    backends: [cufinufft, finufft, pynfft]
+
+
+2025-02-04 23:29:36,708 DEBUG [matplotlib] matplotlib data path: /opt/anaconda3/envs/aspire/lib/python3.9/site-packages/matplotlib/mpl-data
+2025-02-04 23:29:36,711 DEBUG [matplotlib] CONFIGDIR=/Users/yuguan/.matplotlib
+2025-02-04 23:29:36,731 DEBUG [matplotlib] interactive is False
+2025-02-04 23:29:36,731 DEBUG [matplotlib] platform is darwin
+2025-02-04 23:29:36,752 DEBUG [matplotlib] CACHEDIR=/Users/yuguan/.matplotlib
+2025-02-04 23:29:36,754 DEBUG [matplotlib.font_manager] Using fontManager instance from /Users/yuguan/.matplotlib/fontlist-v390.json
+2025-02-04 23:29:36,908 DEBUG [jax._src.path] etils.epath found. Using etils.epath for file I/O.
