@@ -152,21 +152,26 @@ def precompute_sphFB_basis(ell_max, k_max, r0, indices, grid):
     vol = 0 
     c = 0.5  
     Phi = np.zeros([n_grid,n_coef], dtype=np.complex128)
+    
+    radial_part = np.zeros([n_grid,n_coef], dtype=np.complex128)
+    angular_part = np.zeros([n_grid,n_coef], dtype=np.complex128)
     for ell in range(0,ell_max+1):
         for k in range(0,k_max[ell]):
             z0k = r0[ell][k]
             js = spherical_jn(ell, r_unique*z0k/c)
             djs = spherical_jn(ell, z0k, True)
             js = js*np.sqrt(2/c**3)/abs(djs)
-            js[r_unique>c] = 0
-
+            js = js[r_indices] 
+            js[grid.rs>c] = 0
             for m in range(-ell,ell+1):
                 lpmn = lpall[ell,abs(m),:]
                 if m<0:
                     lpmn = (-1)**m * lpmn 
                 exps = exp_all[m+ell_max,:]
-                Phi[:,indices[(ell,k,m)]] =  js[r_indices]*lpmn[th_indices]*exps[ph_indices]
-    return Phi
+                Phi[:,indices[(ell,k,m)]] =  js*lpmn[th_indices]*exps[ph_indices]
+                radial_part[:,indices[(ell,k,m)]] = js
+                angular_part[:,indices[(ell,k,m)]] = lpmn[th_indices]*exps[ph_indices]
+    return Phi,radial_part,angular_part
 
 
 
