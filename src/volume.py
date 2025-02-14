@@ -3,6 +3,7 @@ import numpy.linalg as LA
 import finufft 
 from aspire.basis.basis_utils import all_besselj_zeros, lgwt 
 from scipy.special import spherical_jn
+from scipy.io import savemat
 from utils import *
 
 
@@ -26,9 +27,11 @@ def sphFB_transform(vol, ell_max):
 
     # grid points in real domain 
     grid = get_3d_unif_grid(n)
+    
     X = 2*np.pi*grid.xs
     Y = 2*np.pi*grid.ys
     Z = 2*np.pi*grid.zs
+        
 
     X = X.astype(np.float64)
     Y = Y.astype(np.float64)
@@ -52,8 +55,9 @@ def sphFB_transform(vol, ell_max):
     kz = kz.astype(np.float64)
 
     # map volume to Fourier quadrature points 
-    f = vol.flatten().astype(np.complex128)
-    vol_ft = finufft.nufft3d3(X,Y,Z,f,kx,ky,kz,isign=-1)
+    f = vol.flatten(order='F').astype(np.complex128)
+    vol_ft = finufft.nufft3d3(X,Y,Z,f,kx,ky,kz,isign=-1,eps=1e-12)
+
 
     # evaluate inner product 
     r_unique, r_indices = np.unique(_grid.rs, return_inverse=True)

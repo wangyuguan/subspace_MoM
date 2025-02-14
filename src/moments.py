@@ -30,14 +30,14 @@ def coef_t_subspace_moments(vol_coef, ell_max_vol, k_max, r0, indices_vol, rot_c
     euler_nodes, weights = load_so3_quadrature(ell_max_vol, 2*ell_max_half_view)
     precomp_view_basis = precompute_rot_density(rot_coef, ell_max_half_view, euler_nodes)
     rot_density = precomp_view_basis @ rot_coef
-    M1 = 0 
+    M1 = np.zeros([n_grid,1], dtype=np.complex128)
     print('getting the first moment')
     for i in range(len(weights)):
         vol_coef_rot = rotate_sphFB(vol_coef, ell_max_vol, k_max, indices_vol, euler_nodes[i,:])
         fft_Img = precomp_vol_basis @ vol_coef_rot
         fft_Img = fft_Img.reshape(-1,1)
         M1 += weights[i]*rot_density[i]*fft_Img
-
+        fft_Img = fft_Img.flatten()
 
     # form the projected second moment 
     euler_nodes, weights = load_so3_quadrature(2*ell_max_vol, 2*ell_max_half_view)
@@ -112,45 +112,45 @@ def coef_t_subspace_moments(vol_coef, ell_max_vol, k_max, r0, indices_vol, rot_c
     return subMoMs
 
 
-def moment_LS(x0, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, A_constr, b_constr, l1=None, l2=None, l3=None):
+# def moment_LS(x0, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, A_constr, b_constr, l1=None, l2=None, l3=None):
     
-    if l1 is None:
-        l1 = LA.norm(m1_emp.flatten())**2
-    if l2 is None:
-        l2 = LA.norm(m2_emp.flatten())**2
-    if l3 is None:
-        l3 = LA.norm(m3_emp.flatten())**2
+#     if l1 is None:
+#         l1 = LA.norm(m1_emp.flatten())**2
+#     if l2 is None:
+#         l2 = LA.norm(m2_emp.flatten())**2
+#     if l3 is None:
+#         l3 = LA.norm(m3_emp.flatten())**2
     
-    linear_constraint = {'type': 'ineq', 'fun': lambda x: b_constr - A_constr @ x}
-    objective = lambda x: find_cost_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3)
-    result = minimize(objective, x0, method='SLSQP', jac=True, constraints=[linear_constraint])
+#     linear_constraint = {'type': 'ineq', 'fun': lambda x: b_constr - A_constr @ x}
+#     objective = lambda x: find_cost_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3)
+#     result = minimize(objective, x0, method='SLSQP', jac=True, constraints=[linear_constraint])
 
-    return result 
+#     return result 
 
 
 def find_cost_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3):
     
     _, w_so3_m2 = quadrature_rules['m2']
     _, w_so3_m3 = quadrature_rules['m3']
-    Phi = Phi_precomps['m2']
-    Psi = Psi_precomps['m3']
+    # Phi = Phi_precomps['m2']
+    # Psi = Psi_precomps['m3']
 
     # covert to jax array 
-    x, w_so3 = jnp.array(x), jnp.array(w_so3)
+    x, w_so3_m2, w_so3_m3 = jnp.array(x), jnp.array(w_so3_m2), jnp.array(w_so3_m3)
 
     # compute the cost and gradient from the three moments
     if l1>0:
-      cost1, grad1 = find_cost_grad_m1(x, w_so3_m2, Phi, Psi, m1_emp, l1)
+       cost1, grad1 = find_cost_grad_m1(x, w_so3_m2, Phi_precomps['m2'], Psi_precomps['m2'], m1_emp, l1)
     else:
         cost1, grad1 = 0, np.zeros(x.shape)
     if l2>0:
-      cost2, grad2 = find_cost_grad_m2(x, w_so3_m2, Phi, Psi, m2_emp, l2)
+        cost2, grad2 = find_cost_grad_m2(x, w_so3_m2, Phi_precomps['m2'], Psi_precomps['m2'], m2_emp, l2)
     else:
         cost1, grad1 = 0, np.zeros(x.shape)
     if l3>0:
-      cost3, grad3 = find_cost_grad_m3(x, w_so3_m3, Phi, Psi, m3_emp, l3)
+        cost3, grad3 = find_cost_grad_m3(x, w_so3_m3, Phi_precomps['m3'], Psi_precomps['m3'], m3_emp, l3)
     else:
-        cost1, grad1 = 0, np.zeros(x.shape)
+        cost3, grad3 = 0, np.zeros(x.shape)
 
     cost = cost1+cost2+cost3 
     grad = grad1+grad2+grad3 

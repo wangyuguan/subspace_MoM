@@ -1,6 +1,7 @@
 import numpy as np 
 from aspire.basis.basis_utils import lgwt 
 import e3x
+from scipy.linalg import eigh
 
 
 class Grid_2d:
@@ -213,11 +214,11 @@ def get_spherequad(nth, nph):
     phs = 2*np.pi*np.arange(nph)/nph 
     wphs =  2*np.pi*np.ones(nph)/nph 
   
-    ths, phs = np.meshgrid(ths, phs, indexing='ij')
-    ths, phs = ths.flatten(), phs.flatten()
+    ths, phs = np.meshgrid(ths, phs, indexing='xy')
+    ths, phs = ths.flatten(order='F'), phs.flatten(order='F')
 
-    wths, wphs = np.meshgrid(wths, wphs, indexing='ij')
-    wths, wphs = wths.flatten(), wphs.flatten()
+    wths, wphs = np.meshgrid(wths, wphs, indexing='xy')
+    wths, wphs = wths.flatten(order='F'), wphs.flatten(order='F')
     w = wths*wphs 
 
     return Grid_3d(type = 'spherical', ths=ths, phs=phs, w=w)
@@ -237,22 +238,23 @@ def get_3dballquad(nr,nth,nph,R):
     :return: The 3d grid points object
 
     """
-    [r,wr] = lgwt(nr,0,R)
-    [th,wth] = lgwt(nth,-1,1)
-    th = np.arccos(th)
-    ph = phis = 2*np.pi*np.arange(0,nph)/nph
-    wph = 2*np.pi*np.ones(nph)/nph
+    # [r,wr] = lgwt(nr,0,R)
+    # [th,wth] = lgwt(nth,-1,1)
+    # th = np.arccos(th)
+    # ph = phis = 2*np.pi*np.arange(0,nph)/nph
+    # wph = 2*np.pi*np.ones(nph)/nph
 
 
-    [r,th,ph] = np.meshgrid(r,th,ph,indexing='ij')
-    [wr,wth,wph] = np.meshgrid(wr,wth,wph,indexing='ij')
+    # [r,th,ph] = np.meshgrid(r,th,ph,indexing='ij')
+    # [wr,wth,wph] = np.meshgrid(wr,wth,wph,indexing='ij')
 
-    w = wr*wth*wph*(r**2)
-    w = w.flatten()
+    # w = wr*wth*wph*(r**2)
+    # w = w.flatten()
 
-    r = r.flatten()
-    th = th.flatten()
-    ph = ph.flatten()
+    # r = r.flatten()
+    # th = th.flatten()
+    # ph = ph.flatten()
+    r,th,ph,w = spherequad(nr, nth, nph, R)
 
     return Grid_3d(type='spherical',rs=r,ths=th,phs=ph,w=w)
 
@@ -269,9 +271,9 @@ def get_3d_unif_grid(n,rescale=1):
         x = np.arange(-n/2,n/2)
     else:
         x = np.arange(-(n-1)/2,(n-1)/2+1)
- 
-    [x,y,z] = np.meshgrid(x,x,x,indexing='ij')
-    grid = Grid_3d(type='euclid', xs=x.flatten(), ys=y.flatten(), zs=z.flatten(), rescale=rescale)
+
+    [x,y,z] = np.meshgrid(x,x,x,indexing='xy')
+    grid = Grid_3d(type='euclid', xs=x.flatten(order='F'), ys=y.flatten(order='F'), zs=z.flatten(order='F'), rescale=rescale)
 
     return grid
 
@@ -288,8 +290,8 @@ def get_2d_unif_grid(n,rescale=1):
     else:
         x = np.arange(-(n-1)/2,(n-1)/2+1)
  
-    [x,y] = np.meshgrid(x,x,indexing='ij')
-    grid = Grid_2d(type='euclid', xs=x.flatten(), ys=y.flatten(), rescale=rescale)
+    [x,y] = np.meshgrid(x,x,indexing='xy')
+    grid = Grid_2d(type='euclid', xs=x.flatten(order='F'), ys=y.flatten(order='F'), rescale=rescale)
 
     return grid
 
@@ -416,7 +418,7 @@ def norm_assoc_legendre_all(nmax, x):
 
     """
 
-    x = x.flatten()
+    x = x.flatten(order='F')
     nx = len(x)
     y = np.zeros((nmax+1,nmax+1,nx))
 
@@ -489,3 +491,133 @@ def vMF_density(centers,w,kappa,grid):
     f = np.sum(np.diag(w) @ f, 0)
     
     return f 
+
+
+
+
+
+def spherequad(nr, nt, np_, rad):
+    """
+    Generate Gauss quadrature nodes and weights for spherical volume integrals.
+
+    Parameters
+    ----------
+    nr : int
+         Number of radial nodes.
+    nt : int
+         Number of theta nodes in [0, pi].
+    np_ : int
+         Number of phi nodes in [0, 2*pi].
+    rad : float
+         Sphere radius. Set to np.inf for infinite domain.
+
+    Returns
+    -------
+    r : 1D array
+        Radial nodes (flattened).
+    t : 1D array
+        Theta nodes (flattened).
+    p : 1D array
+        Phi nodes (flattened).
+    w : 1D array
+        Quadrature weights (flattened).
+    """
+    # Radial quadrature (mapped Jacobi) for k = 2
+    r, wr = rquad(nr, 2)
+    r = np.clip(r, 0, 1)  # ensure r in [0,1]
+    if np.isinf(rad):    # Infinite radius sphere
+        wr = wr / (1 - r)**4
+        r = r / (1 - r)
+    else:                # Finite sphere: scale nodes and weights
+        wr = wr * (rad**3)
+        r = r * rad
+
+    # Theta quadrature (mapped Legendre) for k = 0
+    x, wt = rquad(nt, 0)
+    x = np.clip(x, 0, 1)
+    # Compute theta nodes: t = arccos(2*x - 1); ensure argument is in [-1,1]
+    t = np.arccos(np.clip(2 * x - 1, -1, 1))
+    wt = 2 * wt
+
+    # Phi nodes (Gauss-Fourier)
+    p = 2 * np.pi * np.arange(np_) / np_
+    wp = 2 * np.pi * np.ones(np_) / np_
+
+    # Create product grid using MATLAB-style meshgrid:
+    # MATLAB: [rr,tt,pp] = meshgrid(r, t, p) produces arrays of shape (len(t), len(r), len(p))
+    rr, tt, pp = np.meshgrid(r, t, p, indexing='xy')
+    # Flatten arrays in Fortran (column-major) order to mimic MATLAB's (rr(:), etc.)
+    r_flat = rr.ravel(order='F')
+    t_flat = tt.ravel(order='F')
+    p_flat = pp.ravel(order='F')
+
+    # Combine the weights. In MATLAB:
+    #    w = reshape( reshape(wt*wr', nr*nt, 1) * wp', nr*nt*np, 1);
+    # In Python, first form the outer product of wt (theta weights) and wr (radial weights).
+    W_rt = np.outer(wt, wr)         # shape: (nt, nr)
+    W_rt_flat = W_rt.ravel(order='F') # flatten in column-major order
+    # Then form the outer product with the phi weights
+    W = np.outer(W_rt_flat, wp).ravel(order='F')
+
+    return r_flat, t_flat, p_flat, W
+
+def rquad(N, k):
+    """
+    Compute Gauss quadrature nodes and weights for a Jacobi-type weight.
+    
+    Parameters
+    ----------
+    N : int
+        Number of quadrature points.
+    k : int or float
+        Parameter for the weight function.
+        
+    Returns
+    -------
+    x : 1D array
+        Quadrature nodes mapped to [0,1].
+    w : 1D array
+        Quadrature weights.
+    """
+    k1 = k + 1
+    k2 = k + 2
+    n = np.arange(1, N + 1)      # n = 1,2,...,N
+    nnk = 2 * n + k            # vector of length N
+
+    # First column A: [k/k2,  k^2/( (2*n+k)*(2*n+k+2) ) for n=1:N]
+    A0 = k / k2
+    A_rest = (k**2) / (nnk * (nnk + 2))
+    A = np.concatenate(([A0], A_rest))  # length = N+1
+
+    # For n = 2:N, update
+    n2 = np.arange(2, N + 1)     # length N-1
+    nnk_n2 = nnk[1:]           # corresponding nnk for n>=2
+    B1 = 4 * k1 / (k2**2 * (k + 3))
+    nk = n2 + k                # length N-1
+    nnk2 = nnk_n2 ** 2
+    B = 4 * (n2 * nk)**2 / (nnk2**2 - nnk2)
+
+    # Construct matrix 'ab'. MATLAB does:
+    #   ab = [A'  [ (2^k1)/k1; B1; B'] ];
+    col2 = np.concatenate(([2**k1 / k1], [B1], B))
+    # We need only the first N rows (MATLAB uses ab(1:N,:))
+    ab = np.column_stack((A[:N], col2[:N]))
+    
+    # Compute s = sqrt(ab(2:N,2)) for rows 2 to N (MATLAB 2-indexed)
+    s = np.sqrt(ab[1:N, 1])
+    
+    # Build symmetric tridiagonal matrix T (size N x N)
+    d = ab[:N, 0]  # main diagonal
+    T = np.diag(d)
+    if N > 1:
+        T += np.diag(s, k=-1) + np.diag(s, k=1)
+    
+    # Compute eigenvalues and eigenvectors
+    # eigh returns eigenvalues in ascending order
+    X, V = eigh(T)
+    # Map eigenvalues: x = (X + 1) / 2
+    x = (X + 1) / 2
+    # Compute weights: w = (1/2)^(k1)*ab(1,2)*(first row of V)^2
+    w = (0.5)**(k1) * ab[0, 1] * (V[0, :]**2)
+    
+    return x, w
