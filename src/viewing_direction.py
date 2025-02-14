@@ -51,11 +51,11 @@ def sample_sph_coef(N, spham_coef, ell_max_half, C=5.0):
 
 def wignerD_transform(fun, ell_max):
     
-    _alpha = 2*np.pi*np.arange(2*ell_max+1)/(2*ell_max+1)
-    _gamma = 2*np.pi*np.arange(2*ell_max+1)/(2*ell_max+1)
+    _alpha = np.pi*np.arange(2*ell_max+2)/(ell_max+1)
+    _gamma = np.pi*np.arange(2*ell_max+2)/(ell_max+1)
 
-    _walpha = 2*np.pi*np.ones(2*ell_max+1)/(2*ell_max+1)
-    _wgamma = 2*np.pi*np.ones(2*ell_max+1)/(2*ell_max+1)
+    _walpha = 2*np.pi*np.ones(2*ell_max+2)/(2*ell_max+2)
+    _wgamma = 2*np.pi*np.ones(2*ell_max+2)/(2*ell_max+2)
 
     _beta, _wbeta = lgwt(2*(ell_max+1),-1,1)
     _beta =  np.arccos(_beta)
@@ -87,8 +87,32 @@ def wignerD_transform(fun, ell_max):
             for mp in range(-ell,ell+1):
                 for m in range(-ell,ell+1):
                     coef[indices[(ell,mp,m)]] += np.conj(Dl[mp+ell,m+ell])*fi*wi/C
+
     
     return coef, indices
+
+
+def vmf_t_rot_coef(centers,w_vmf,kappa,ell_max_half):
+    ell_max = 2*ell_max_half 
+    def _fun(alpha, beta, gamma):
+        grid = Grid_3d(type='spherical', ths=np.array([beta]),phs=np.array([alpha]))
+        return 4*np.pi*vMF_density(centers,w_vmf,kappa,grid)[0]
+    _rot_coef , _ = wignerD_transform(_fun, ell_max)
+    indices = {}
+    rot_coef = []
+    i = 0 
+    for ell in range(ell_max+1):    
+        for mp in range(-ell,ell+1):
+            for m in range(-ell,ell+1):
+                if ell % 2 == 0 and m==0:
+                    indices[(ell,mp)] = i 
+                    rot_coef.append(_rot_coef[i])
+                i += 1 
+    rot_coef = np.array(rot_coef)
+    rot_coef = rot_coef/rot_coef[0]
+    return rot_coef, indices
+    
+    
 
 
 def full_sph_harm_transform(fun, ell_max):
@@ -296,6 +320,8 @@ def sph_t_rot_coef(sph_coef, ell_max_half):
                 rot_coef[indices[(ell,m)]] = (-1)**m*sph_coef[indices[(ell,-m)]]/np.sqrt(4*np.pi/(2*ell+1))
 
     return rot_coef
+
+
 
 
 def precompute_rot_density(rot_coef, ell_max_half, euler_nodes):
