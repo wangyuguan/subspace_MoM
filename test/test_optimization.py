@@ -139,6 +139,7 @@ b0 = np.zeros(b.shape)
 x0 = 1e-6*np.concatenate([a0,b0])
 res = moment_LS(x0, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, A_constr, rhs)
 x = res.x 
+savemat('x.mat',{'x':x})
 a_est = x[:na]
 vol_coef_est = sphFB_r_t_c @ a_est
 vol_est = coef_t_vol(vol_coef_est, ell_max_vol, ds_res, k_max, r0, indices_vol)
