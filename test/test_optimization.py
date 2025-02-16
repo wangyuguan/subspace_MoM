@@ -54,7 +54,7 @@ def my_fun(th,ph):
     grid = Grid_3d(type='spherical', ths=np.array([th]),phs=np.array([ph]))
     return 4*np.pi*vMF_density(centers,w_vmf,kappa,grid)[0]
 
-ell_max_half_view = 4
+ell_max_half_view = 2
 sph_coef, indices = sph_harm_transform(my_fun, ell_max_half_view)
 rot_coef = sph_t_rot_coef(sph_coef, ell_max_half_view)
 rot_coef[0] = 1
@@ -89,7 +89,7 @@ vol_coef = sphFB_r_t_c @ a
 # form the moments 
 r2_max = 250 
 r3_max = 100 
-tol2 = 1e-10
+tol2 = 1e-12
 tol3 = 1e-6 
 grid = get_2d_unif_grid(ds_res,1/ds_res)
 grid = Grid_3d(xs=grid.xs, ys=grid.ys, zs=np.zeros(grid.ys.shape))
@@ -136,23 +136,31 @@ a0 = np.random.normal(0,1,a.shape)
 b0 = np.zeros(b.shape)
 
 
-x0 = xtrue+1e-4*np.concatenate([a0,b0])
-
-
-
+x0 = 1e-6*np.concatenate([a0,b0])
+res = moment_LS(x0, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, A_constr, rhs)
+x = res.x 
+a_est = x[:na]
+vol_coef_est = sphFB_r_t_c @ a_est
+vol_est = coef_t_vol(vol_coef_est, ell_max_vol, ds_res, k_max, r0, indices_vol)
+vol_est = vol_est.reshape([ds_res,ds_res,ds_res])
+with mrcfile.new('vol_est.mrc', overwrite=True) as mrc:
+    mrc.set_data(vol_est)  # Set the volume data
+    mrc.voxel_size = 1.0  
+'''
 savemat('moms_emp.mat',{'m1_emp':m1_emp,'m2_emp':m2_emp,'m3_emp':m3_emp})
 savemat('precomps.mat',{'Phi_precomps_m2':Phi_precomps['m2'],'Phi_precomps_m3':Phi_precomps['m3'],'Psi_precomps_m2':Psi_precomps['m2'],'Psi_precomps_m3':Psi_precomps['m3']})
-savemat('w_so3.mat',{'w_so3_m2':quadrature_rules['m2'][1],'w_so3_m3':quadrature_rules['m3'][1]})
+savemat('w_so3.mat',{'w_so3_m2':quadrature_rules['m2'][1],'w_so3_m3':quadrature_rules['m3'][1],'nodes_so3_m2':quadrature_rules['m2'][0],'nodes_so3_m3':quadrature_rules['m3'][0]})
 savemat('params.mat',{'a':a,'b':b,'xtrue':xtrue,'x0':x0})
 savemat('constraint.mat',{'A_constr':A_constr,'rhs':rhs})
+'''
 
 
+'''
 l1 = LA.norm(m1_emp.flatten())**2
 l2 = LA.norm(m2_emp.flatten())**2
 l3 = LA.norm(m3_emp.flatten())**2
 objective = lambda x: find_cost_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3)
-f,g = objective(xtrue)
-print(f, LA.norm(g))
+'''
 
 
 

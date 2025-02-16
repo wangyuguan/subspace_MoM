@@ -83,14 +83,15 @@ def sphFB_transform(vol, ell_max):
             js = spherical_jn(ell, r_unique*z0k/c)
             djs = spherical_jn(ell, z0k, True)
             js = js*np.sqrt(2/c**3)/abs(djs)
-            js[r_unique>c] = 0
+            js = js[r_indices] 
+            js[_grid.rs>c] = 0
 
             for m in range(-ell,ell+1):
                 lpmn = lpall[ell,abs(m),:]
                 if m<0:
                     lpmn = (-1)**m * lpmn 
                 exps = exp_all[m+ell_max,:]
-                vol_coef[i] = np.sum(np.conj(js[r_indices]*lpmn[th_indices]*exps[ph_indices])*w*vol_ft)
+                vol_coef[i] = np.sum(np.conj(js*lpmn[th_indices]*exps[ph_indices])*w*vol_ft)
 
                 indices[(ell,k,m)] = i
                 i += 1 
@@ -119,14 +120,15 @@ def sphFB_eval(vol_coef, ell_max, k_max, r0, indices, grid):
             js = spherical_jn(ell, r_unique*z0k/c)
             djs = spherical_jn(ell, z0k, True)
             js = js*np.sqrt(2/c**3)/abs(djs)
-            js[r_unique>c] = 0
+            js = js[r_indices] 
+            js[grid.rs>c] = 0
 
             for m in range(-ell,ell+1):
                 lpmn = lpall[ell,abs(m),:]
                 if m<0:
                     lpmn = (-1)**m * lpmn 
                 exps = exp_all[m+ell_max,:]
-                vol += vol_coef[indices[ell,k,m]]*js[r_indices]*lpmn[th_indices]*exps[ph_indices]
+                vol += vol_coef[indices[ell,k,m]]*js*lpmn[th_indices]*exps[ph_indices]
     
     return vol 
 
@@ -169,9 +171,8 @@ def precompute_sphFB_basis(ell_max, k_max, r0, indices, grid):
                     lpmn = (-1)**m * lpmn 
                 exps = exp_all[m+ell_max,:]
                 Phi[:,indices[(ell,k,m)]] =  js*lpmn[th_indices]*exps[ph_indices]
-                radial_part[:,indices[(ell,k,m)]] = js
-                angular_part[:,indices[(ell,k,m)]] = lpmn[th_indices]*exps[ph_indices]
-    return Phi,radial_part,angular_part
+
+    return Phi
 
 
 

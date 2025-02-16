@@ -1,0 +1,27 @@
+2025-02-15 23:56:34,160 DEBUG [root] ASPIRE configuration directory is /Users/yuguanwang/.config/ASPIRE
+2025-02-15 23:56:34,160 DEBUG [root] ASPIRE configuration resolution details [({'logging': {'log_dir': '/Users/yuguanwang/software/subspace_MoM/test/logs'}}, ConfigSource(<super: <class 'ConfigSource'>, <ConfigSource object>>, None, False, False)), ({}, ConfigSource(<super: <class 'ConfigSource'>, <YamlSource object>>, '/Users/yuguanwang/.config/ASPIRE/config.yaml', False, False)), ({'version': '0.12.2', 'common': OrderedDict([('numeric', 'numpy'), ('fft', 'pyfftw'), ('cache_dir', '')]), 'logging': OrderedDict([('log_dir', 'logs'), ('log_exceptions', 1), ('tqdm_disable', False), ('console_level', 'INFO'), ('log_file_level', 'DEBUG'), ('log_prefix', 'aspire')]), 'nufft': OrderedDict([('backends', ['cufinufft', 'finufft', 'pynfft'])]), 'ray': OrderedDict([('temp_dir', '/tmp/ray')])}, ConfigSource(<super: <class 'ConfigSource'>, <YamlSource object>>, '/Users/yuguanwang/software/ASPIRE-Python/src/aspire/config_default.yaml', True, False))]
+2025-02-15 23:56:34,161 DEBUG [root] Resolved config.yaml:
+
+logging:
+    log_dir: /Users/yuguanwang/software/subspace_MoM/test/logs
+    log_exceptions: 1
+    tqdm_disable: no
+    console_level: INFO
+    log_file_level: DEBUG
+    log_prefix: aspire
+version: 0.12.2
+common:
+    numeric: numpy
+    fft: pyfftw
+    cache_dir: ''
+
+nufft:
+    backends: [cufinufft, finufft, pynfft]
+
+ray:
+    temp_dir: /tmp/ray
+
+
+2025-02-15 23:56:34,319 DEBUG [aspire.nufft.finufft] FinufftPlan adjusted eps=1.1920928955078125e-07 from requested 1e-08.
+2025-02-15 23:57:54,389 DEBUG [aspire.nufft.finufft] FinufftPlan adjusted eps=1.1920928955078125e-07 from requested 1e-08.
+2025-02-15 23:58:00,273 DEBUG [aspire.nufft.finufft] FinufftPlan adjusted eps=1.1920928955078125e-07 from requested 1e-08.

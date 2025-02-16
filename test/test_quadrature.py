@@ -41,4 +41,4 @@ print(integrals[0]/np.sqrt(4*np.pi), LA.norm(integrals[1:], np.inf))
 ell_max_1 = 5 
 ell_max_2 = 2 
 euler_nodes, weights  = load_so3_quadrature(ell_max_1, ell_max_2)
-np.sum(weights)
+print(np.sum(weights))

@@ -184,8 +184,7 @@ _grid = Grid_3d(type='spherical', ths=_ths, phs=_phs)
 
 
 f = vMF_density(centers,w_vmf,kappa,_grid)
-
-np.sum(f*wsph)
+print(np.sum(f*wsph))
 
 
 # transform the vMF distribution 
@@ -211,7 +210,7 @@ plt.ylabel("phis")
 plt.show()
 
 
-LA.norm(f_vmf-f_vmf_expand/4/np.pi,'fro')/LA.norm(f_vmf,'fro')
+print(LA.norm(f_vmf-f_vmf_expand/4/np.pi,'fro')/LA.norm(f_vmf,'fro'))
 
 
 # use only the even degree spherical harmonics 
@@ -234,7 +233,7 @@ plt.show()
 sph_r_t_c, sph_c_t_r = get_sph_r_t_c_mat(ell_max_half)
 sph_coef_r = sph_c_t_r @ sph_coef
 
-LA.norm(np.imag(sph_coef_r))
+print(LA.norm(np.imag(sph_coef_r)))
 
 
 # map to rotation coefficient 
@@ -257,11 +256,11 @@ for i in range(len(weights)):
                 evals[i] += weights[i]*rot_coef[indices[(ell,m)]]*Dl[m+ell,ell]
 
                 
-np.sum(evals)
+print(np.sum(evals))
 
 
 # effectively doing the same thing as above 
 
 Psi = precompute_rot_density(rot_coef, ell_max_half, euler_nodes)
 evals = Psi@rot_coef
-np.dot(Psi@rot_coef, weights)
+print(np.dot(Psi@rot_coef, weights))

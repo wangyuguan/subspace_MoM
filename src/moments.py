@@ -10,6 +10,7 @@ from volume import *
 import e3x
 import scipy 
 from scipy.optimize import minimize
+from scipy.linalg import svd
 
 
 def coef_t_subspace_moments(vol_coef, ell_max_vol, k_max, r0, indices_vol, rot_coef, ell_max_half_view, opts):
@@ -44,6 +45,7 @@ def coef_t_subspace_moments(vol_coef, ell_max_vol, k_max, r0, indices_vol, rot_c
     precomp_view_basis = precompute_rot_density(rot_coef, ell_max_half_view, euler_nodes)
     rot_density = precomp_view_basis @ rot_coef
     M2 = 0 
+
     G = np.random.normal(0,1,[n_grid, r2_max])
     print('getting the second moment')
     for i in range(len(weights)):
@@ -52,10 +54,11 @@ def coef_t_subspace_moments(vol_coef, ell_max_vol, k_max, r0, indices_vol, rot_c
         fft_Img = fft_Img.reshape(-1,1)
         M2 += (weights[i]*rot_density[i]*fft_Img) @ (np.conj(fft_Img).T @ G)
 
-    U2, S2, _ = LA.svd(M2, full_matrices=False)
+
+    U2, S2, _ = svd(M2, full_matrices=False)
     cumulative_energy = np.cumsum(S2**2) / np.sum(S2**2)
     r2 = np.argmax(cumulative_energy > (1 - tol2)) + 1
-    U2 = U2[:,1:r2]
+    U2 = U2[:,:r2]
 
 
     m2 = 0 
@@ -65,7 +68,8 @@ def coef_t_subspace_moments(vol_coef, ell_max_vol, k_max, r0, indices_vol, rot_c
         fft_Img = fft_Img.reshape(-1,1)
         fft_Img = np.conj(U2).T @ fft_Img
         m2 += weights[i]*rot_density[i]*(fft_Img @ np.conj(fft_Img).T)
-
+        
+        
 
     # form the projected third moment 
     print('getting the third moment')
@@ -79,12 +83,12 @@ def coef_t_subspace_moments(vol_coef, ell_max_vol, k_max, r0, indices_vol, rot_c
         vol_coef_rot = rotate_sphFB(vol_coef, ell_max_vol, k_max, indices_vol, euler_nodes[i,:])
         fft_Img = precomp_vol_basis @ vol_coef_rot
         fft_Img = fft_Img.reshape(-1,1)
-        M3 += (weights[i]*rot_density[i]*fft_Img) @ ((np.conj(fft_Img).T @ G1) * (np.conj(fft_Img).T @ G2))
+        M3 += (weights[i]*rot_density[i]*fft_Img) @ ((fft_Img.T @ G1) * (fft_Img.T @ G2))
 
-    U3, S3, _ = LA.svd(M3, full_matrices=False)
+    U3, S3, _ = svd(M3, full_matrices=False)
     cumulative_energy = np.cumsum(S3**2) / np.sum(S3**2)
     r3 = np.argmax(cumulative_energy > (1 - tol3)) + 1
-    U3 = U3[:,1:r3]
+    U3 = U3[:,:r3]
 
 
     m3 = 0
@@ -111,21 +115,20 @@ def coef_t_subspace_moments(vol_coef, ell_max_vol, k_max, r0, indices_vol, rot_c
     subMoMs['S3'] = S3
     return subMoMs
 
-
-# def moment_LS(x0, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, A_constr, b_constr, l1=None, l2=None, l3=None):
+def moment_LS(x0, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, A_constr, b_constr, l1=None, l2=None, l3=None):
     
-#     if l1 is None:
-#         l1 = LA.norm(m1_emp.flatten())**2
-#     if l2 is None:
-#         l2 = LA.norm(m2_emp.flatten())**2
-#     if l3 is None:
-#         l3 = LA.norm(m3_emp.flatten())**2
+    if l1 is None:
+        l1 = LA.norm(m1_emp.flatten())**2
+    if l2 is None:
+        l2 = LA.norm(m2_emp.flatten())**2
+    if l3 is None:
+        l3 = LA.norm(m3_emp.flatten())**2
     
-#     linear_constraint = {'type': 'ineq', 'fun': lambda x: b_constr - A_constr @ x}
-#     objective = lambda x: find_cost_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3)
-#     result = minimize(objective, x0, method='SLSQP', jac=True, constraints=[linear_constraint])
-
-#     return result 
+    linear_constraint = {'type': 'ineq', 'fun': lambda x: b_constr - A_constr @ x}
+    objective = lambda x: find_cost_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3)
+    result = minimize(objective, x0, method='SLSQP', jac=True, constraints=[linear_constraint], options={'disp': True,'maxiter':5000, 'ftol':1e-6, 'iprint':2})
+    
+    return result 
 
 
 def find_cost_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3):

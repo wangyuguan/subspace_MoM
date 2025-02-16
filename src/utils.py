@@ -104,6 +104,7 @@ def load_so3_quadrature(ell_max_1, ell_max_2):
 def load_sph_gauss_quadrature(N):
     
     is_gauss = True 
+    N
     
     if N==1:
         data = np.genfromtxt('../data/sphere_rules/N001_M2_Inv.dat',skip_header=2)
@@ -190,10 +191,11 @@ def load_sph_gauss_quadrature(N):
     if is_gauss:
         nodes = data[:,0:3]
         weights = data[:,3]
-        
-        
+
+    phs = np.pi - np.arctan2(data[:,0],data[:,1])
+    ths = np.arccos(data[:,2])
       
-    return Grid_3d(type='euclid',xs=nodes[:,0],ys=nodes[:,1],zs=nodes[:,2],w=weights)
+    return Grid_3d(type='spherical',ths=ths,phs=phs,w=weights)
 
 def get_spherequad(nth, nph):
     """

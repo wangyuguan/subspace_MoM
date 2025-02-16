@@ -151,7 +151,7 @@ fft_img = sphFB_eval(vol_coef, ell_max, k_max, r0, indices, grid_proj)
 vol_coef_rot = rotate_sphFB(vol_coef, ell_max, k_max, indices, (alpha,beta,gamma))
 _fft_img = sphFB_eval(vol_coef_rot, ell_max, k_max, r0, indices, grid)
 
-np.linalg.norm(fft_img-_fft_img)/np.linalg.norm(fft_img)
+print(np.linalg.norm(fft_img-_fft_img)/np.linalg.norm(fft_img))
 
 # check precomputation of basis matrix is correct 
 grid = get_3d_unif_grid(n,rescale=1/ds_res)
@@ -160,4 +160,4 @@ evals = sphFB_eval(vol_coef, ell_max, k_max, r0, indices, grid)
 Phi = precompute_sphFB_basis(ell_max, k_max, r0, indices, grid)
 _evals = Phi @ vol_coef 
 
-LA.norm(evals-_evals)/LA.norm(evals)
+print(LA.norm(evals-_evals)/LA.norm(evals))
