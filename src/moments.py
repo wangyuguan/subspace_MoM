@@ -126,7 +126,8 @@ def moment_LS(x0, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, 
     
     linear_constraint = {'type': 'ineq', 'fun': lambda x: b_constr - A_constr @ x}
     objective = lambda x: find_cost_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3)
-    result = minimize(objective, x0, method='SLSQP', jac=True, constraints=[linear_constraint], options={'disp': True,'maxiter':5000, 'ftol':1e-6, 'iprint':2})
+    result = minimize(objective, x0, method='SLSQP', jac=True, constraints=[linear_constraint], options={'disp': True,'maxiter':5000, 'ftol':1e-9, 'iprint':2})
+    # result = minimize(objective, x0, method='trust-constr', jac=True, constraints=[linear_constraint], options={'disp': True,'maxiter':5000, 'verbose':3})
     
     return result 
 
