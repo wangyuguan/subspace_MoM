@@ -163,7 +163,7 @@ for i in range(5):
     print(type(loss2))
     if res2.fun<loss2:
       x2 = res2.x
-      loss2 = res2.x  
+      loss2 = res2.fun
   
 savemat('res2.mat',res2)
 a_est = x2[:na]
