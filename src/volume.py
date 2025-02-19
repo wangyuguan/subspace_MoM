@@ -279,8 +279,6 @@ def reflect_sphFB(vol_coef, ell_max, k_max, indices):
 
 def align_vol_coef(vol_coef, vol_coef_est, ell_max, k_max, indices):
     
-    
-    
     manifold = pymanopt.manifolds.SpecialOrthogonalGroup(3) 
     @pymanopt.function.numpy(manifold)
     def cost(Rot):
@@ -325,7 +323,7 @@ def align_vol_coef(vol_coef, vol_coef_est, ell_max, k_max, indices):
         cost_curr = cost(Rots[i])
         cost_ref_curr = cost_ref(Rots[i])
         if cost_curr<cost_initial:
-            costs_initial = cost_curr
+            cost_initial = cost_curr
             Rot0 = Rots[i]
         if cost_ref_curr<cost_ref_initial:
             cost_ref_initial = cost_ref_curr

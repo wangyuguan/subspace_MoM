@@ -78,6 +78,7 @@ ds_res = 64
 Vol = Vol.downsample(ds_res)
 vol = Vol.asnumpy()
 vol = vol[0]
+vol = vol/LA.norm(vol.flatten())
 
 
 ell_max_vol = 3
@@ -157,7 +158,7 @@ for i in range(5):
     sph_r_t_c , sph_c_t_r =  get_sph_r_t_c_mat(ell_max_half_view)
     b0 = np.real(sph_c_t_r @ rot_coef)
     b0 = b0[1:]
-    x0 = np.concatenate([a0,b0])
+    x0 = 0*np.concatenate([a0,b0])
     res2 = moment_LS(x0, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, A_constr, rhs, l3=0)
     print(type(res2.fun))
     print(type(loss2))
@@ -168,12 +169,12 @@ for i in range(5):
 savemat('res2.mat',res2)
 a_est = x2[:na]
 vol_coef_est_m2 = sphFB_r_t_c @ a_est
-vol_est_m2 = coef_t_vol(vol_coef_est_m2, ell_max_vol, ds_res, k_max, r0, indices_vol)
-vol_est_m2 = vol_est_m2.reshape([ds_res,ds_res,ds_res])
+# vol_est_m2 = coef_t_vol(vol_coef_est_m2, ell_max_vol, ds_res, k_max, r0, indices_vol)
+# vol_est_m2 = vol_est_m2.reshape([ds_res,ds_res,ds_res])
 
-with mrcfile.new('vol_est_m2.mrc', overwrite=True) as mrc:
-    mrc.set_data(vol_est_m2)  # Set the volume data
-    mrc.voxel_size = 1.0  
+# with mrcfile.new('vol_est_m2.mrc', overwrite=True) as mrc:
+#     mrc.set_data(vol_est_m2)  # Set the volume data
+#     mrc.voxel_size = 1.0  
 
 
 res3 = moment_LS(x2, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, A_constr, rhs)
@@ -182,40 +183,20 @@ savemat('x3.mat',{'x3':x3})
 savemat('res3.mat',res3)
 a_est = x3[:na]
 vol_coef_est_m3 = sphFB_r_t_c @ a_est
-vol_est_m3 = coef_t_vol(vol_coef_est_m3, ell_max_vol, ds_res, k_max, r0, indices_vol)
-vol_est_m3 = vol_est_m3.reshape([ds_res,ds_res,ds_res])
-with mrcfile.new('vol_est_m3.mrc', overwrite=True) as mrc:
-    mrc.set_data(vol_est_m3)  # Set the volume data
-    mrc.voxel_size = 1.0  
+# vol_est_m3 = coef_t_vol(vol_coef_est_m3, ell_max_vol, ds_res, k_max, r0, indices_vol)
+# vol_est_m3 = vol_est_m3.reshape([ds_res,ds_res,ds_res])
+# with mrcfile.new('vol_est_m3.mrc', overwrite=True) as mrc:
+#     mrc.set_data(vol_est_m3)  # Set the volume data
+#     mrc.voxel_size = 1.0  
 
+vol_coef_est_m2, _ , _ , _ = align_vol_coef(vol_coef,vol_coef_est_m2,ell_max_vol,k_max,indices_vol)
+vol_coef_est_m3, _ , _ , _ = align_vol_coef(vol_coef,vol_coef_est_m3,ell_max_vol,k_max,indices_vol)
 
-def vol_align(vol,vol_est):
-    para =['wemd',64,400,True]
-    vol = Volume(vol)
-    vol_est = Volume(vol_est)
-    vol_est_flip = vol_est.flip()
+vol_est_m2_aligned = coef_t_vol(vol_coef_est_m2, ell_max_vol, ds_res, k_max, r0, indices_vol)
+vol_est_m3_aligned = coef_t_vol(vol_coef_est_m3, ell_max_vol, ds_res, k_max, r0, indices_vol)
 
-    _, R_est = align_BO(vol,vol_est,para,reflect=False)
-    _, R_est_flip = align_BO(vol,vol_est_flip,para,reflect=False)
-
-    vol_est_aligned = vol_est.rotate(Rotation(R_est))
-    vol_est_flip_aligned = vol_est_flip.rotate(Rotation(R_est_flip))
-
-    err = LA.norm(vol.flatten()-vol_est_aligned.flatten())
-    err_flip = LA.norm(vol.flatten()-vol_est_flip_aligned.flatten())
-
-    if err<err_flip:
-      return False, vol_est_aligned.asnumpy(), R_est
-    else:
-      return False, vol_est_flip_aligned.asnumpy(), R_est_flip
-
-
-
- 
-reflect2, vol_est_m2_aligned, R_est2 = vol_align(vol,vol_est_m2)
-reflect3, vol_est_m3_aligned, R_est3 = vol_align(vol,vol_est_m3)
-
-print(reflect2, reflect3)
+vol_est_m2_aligned = np.reshape(vol_est_m2_aligned, [ds_res,ds_res,ds_res])
+vol_est_m3_aligned = np.reshape(vol_est_m3_aligned, [ds_res,ds_res,ds_res])
 
 with mrcfile.new('vol_est_m2_aligned.mrc', overwrite=True) as mrc:
     mrc.set_data(vol_est_m2_aligned)  # Set the volume data
