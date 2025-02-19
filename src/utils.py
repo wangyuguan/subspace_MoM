@@ -101,6 +101,31 @@ def load_so3_quadrature(ell_max_1, ell_max_2):
     return euler_nodes, weights 
 
 
+def rot_t_euler(Rot):
+    if Rot[2, 2] < 1:  
+        if Rot[2, 2] > -1:
+            beta = np.arccos(Rot[2, 2])
+            alpha = np.arctan2(Rot[1, 2], Rot[0, 2])
+            gamma = np.arctan2(Rot[2, 1], -Rot[2, 0])
+        else:
+            beta = np.pi
+            alpha = -np.arctan2(Rot[1, 0], Rot[1, 1])
+            gamma = 0
+    else:
+        beta = 0
+        alpha = np.arctan2(Rot[1, 0], Rot[1, 1])
+        gamma = 0
+
+    # Ensure angles are in the range [0, 2*pi]
+    if alpha < 0:
+        alpha += 2 * np.pi
+
+    if gamma < 0:
+        gamma += 2 * np.pi
+
+    return alpha, beta, gamma
+
+
 def load_sph_gauss_quadrature(N):
     
     is_gauss = True 
@@ -623,3 +648,48 @@ def rquad(N, k):
     w = (0.5)**(k1) * ab[0, 1] * (V[0, :]**2)
     
     return x, w
+
+
+
+
+def two_point_fd(f, x, h=1e-6):
+    """
+    Computes the gradient of a function using two-point finite difference method.
+    
+    Args:
+    - f: A function that takes a 3x3 matrix as input and returns a scalar output.
+    - x: A 3x3 matrix at which to compute the gradient.
+    - h: A small perturbation value for finite difference (default is 1e-6).
+    
+    Returns:
+    - grad: The 3x3 gradient matrix.
+    """
+    grad = np.zeros_like(x)
+    
+    # Loop over each element in the 3x3 matrix
+    for i in range(x.shape[0]):
+        for j in range(x.shape[1]):
+            # Perturb the (i, j) element
+            x_perturb_pos = x.copy()
+            x_perturb_neg = x.copy()
+            
+            x_perturb_pos[i, j] += h  # Perturb positively
+            x_perturb_neg[i, j] -= h  # Perturb negatively
+            
+            # Apply the function to both perturbed matrices
+            f_pos = f(x_perturb_pos)
+            f_neg = f(x_perturb_neg)
+            
+            # Compute the finite difference for the gradient at position (i, j)
+            grad[i, j] = (f_pos - f_neg) / (2 * h)
+    
+    return grad
+
+
+
+
+
+
+
+
+

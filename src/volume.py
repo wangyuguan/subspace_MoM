@@ -1,11 +1,10 @@
 import numpy as np 
 import numpy.linalg as LA 
 import finufft 
-from aspire.basis.basis_utils import all_besselj_zeros, lgwt 
+from aspire.basis.basis_utils import all_besselj_zeros
 from scipy.special import spherical_jn
-from scipy.io import savemat
 from utils import *
-
+import pymanopt
 
 
 
@@ -151,12 +150,8 @@ def precompute_sphFB_basis(ell_max, k_max, r0, indices, grid):
     for m in range(-ell_max,ell_max+1):
         exp_all[m+ell_max,:] = np.exp(1j*m*ph_unique)
 
-    vol = 0 
     c = 0.5  
     Phi = np.zeros([n_grid,n_coef], dtype=np.complex128)
-    
-    radial_part = np.zeros([n_grid,n_coef], dtype=np.complex128)
-    angular_part = np.zeros([n_grid,n_coef], dtype=np.complex128)
     for ell in range(0,ell_max+1):
         for k in range(0,k_max[ell]):
             z0k = r0[ell][k]
@@ -270,6 +265,98 @@ def rotate_sphFB(vol_coef, ell_max, k_max, indices, euler_angles):
             vol_coef_rot[istart:iend+1] = np.conj(Dl).T @ vol_coef[istart:iend+1]
 
     return vol_coef_rot
+
+def reflect_sphFB(vol_coef, ell_max, k_max, indices):
+    
+    vol_coef_ref = np.zeros(vol_coef.shape, dtype=np.complex128)
+    for ell in range(0,ell_max+1):
+        for k in range(0,k_max[ell]):
+            for m in range(-ell,ell+1):
+                vol_coef_ref[indices[(ell,k,m)]] = vol_coef[indices[(ell,k,m)]]*((-1)**(ell-m))
+            
+    return vol_coef_ref
+
+
+def align_vol_coef(vol_coef, vol_coef_est, ell_max, k_max, indices):
+    
+    
+    
+    manifold = pymanopt.manifolds.SpecialOrthogonalGroup(3) 
+    @pymanopt.function.numpy(manifold)
+    def cost(Rot):
+        alpha, beta, gamma  = rot_t_euler(Rot)
+        vol_coef_rot =  rotate_sphFB(vol_coef_est, ell_max, k_max, indices, (alpha, beta, gamma))
+        return LA.norm(vol_coef-vol_coef_rot)**2 / LA.norm(vol_coef)**2
+    
+    
+    vol_coef_est_ref = reflect_sphFB(vol_coef_est, ell_max, k_max, indices)
+    @pymanopt.function.numpy(manifold)
+    def cost_ref(Rot):
+        alpha, beta, gamma  = rot_t_euler(Rot)
+        vol_coef_rot =  rotate_sphFB(vol_coef_est_ref, ell_max, k_max, indices, (alpha, beta, gamma))
+        return LA.norm(vol_coef-vol_coef_rot)**2 / LA.norm(vol_coef)**2
+    
+    @pymanopt.function.numpy(manifold)
+    def grad(Rot):
+        return two_point_fd(cost, Rot, h=1e-6)
+    
+    @pymanopt.function.numpy(manifold)
+    def grad_ref(Rot):
+        return two_point_fd(cost_ref, Rot, h=1e-6)
+    
+    n = 30 
+    alpha = np.arange(n)*2*np.pi/n 
+    beta = np.arange(n)*np.pi/n 
+    gamma = np.arange(n)*np.pi/n 
+    alpha,beta,gamma= np.meshgrid(alpha,beta,gamma,indexing='xy')
+    alpha = alpha.flatten(order='F')
+    beta = beta.flatten(order='F')
+    gamma = gamma.flatten(order='F')
+    N_rot = len(gamma)
+    
+    Rots = np.zeros((N_rot,3,3))
+    cost_initial = 100000000
+    cost_ref_initial = 100000000
+    Rot0 = None 
+    Rot0_ref = None 
+    
+    for i in range(N_rot):
+        Rots[i] = Rz(alpha[i])@Ry(beta[i])@Rz(gamma[i])
+        cost_curr = cost(Rots[i])
+        cost_ref_curr = cost_ref(Rots[i])
+        if cost_curr<cost_initial:
+            costs_initial = cost_curr
+            Rot0 = Rots[i]
+        if cost_ref_curr<cost_ref_initial:
+            cost_ref_initial = cost_ref_curr
+            Rot0_ref = Rots[i]
+    
+    
+    
+    problem = pymanopt.Problem(manifold=manifold, cost=cost, euclidean_gradient=grad)
+    optimizer = pymanopt.optimizers.ConjugateGradient()
+    result = optimizer.run(problem,initial_point=Rot0)
+    Rot = result.point
+    cost_val = cost(Rot)
+    
+    
+    problem_ref = pymanopt.Problem(manifold=manifold, cost=cost_ref, euclidean_gradient=grad_ref)
+    result_ref = optimizer.run(problem_ref,initial_point=Rot0_ref)
+    Rot_ref = result_ref.point
+    cost_val_ref = cost_ref(Rot_ref)
+    
+    
+    if cost_val<cost_val_ref:
+        reflect= False 
+        alpha, beta, gamma  = rot_t_euler(Rot)
+        vol_coef_rot =  rotate_sphFB(vol_coef_est, ell_max, k_max, indices, (alpha, beta, gamma))
+        return vol_coef_rot,Rot,cost_val,reflect 
+    else:
+        reflect= True
+        alpha, beta, gamma  = rot_t_euler(Rot_ref)
+        vol_coef_rot =  rotate_sphFB(vol_coef_est_ref, ell_max, k_max, indices, (alpha, beta, gamma))
+        return vol_coef_rot,Rot_ref,cost_val_ref,reflect 
+        
 
 def calc_k_max(ell_max,nres,ndim):
     """
