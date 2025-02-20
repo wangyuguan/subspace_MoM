@@ -305,7 +305,7 @@ def align_vol_coef(vol_coef, vol_coef_est, ell_max, k_max, indices):
     n = 30 
     alpha = np.arange(n)*2*np.pi/n 
     beta = np.arange(n)*np.pi/n 
-    gamma = np.arange(n)*np.pi/n 
+    gamma = np.arange(n)*2*np.pi/n 
     alpha,beta,gamma= np.meshgrid(alpha,beta,gamma,indexing='xy')
     alpha = alpha.flatten(order='F')
     beta = beta.flatten(order='F')

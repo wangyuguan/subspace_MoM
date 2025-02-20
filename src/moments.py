@@ -126,10 +126,68 @@ def moment_LS(x0, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, 
     
     linear_constraint = {'type': 'ineq', 'fun': lambda x: b_constr - A_constr @ x}
     objective = lambda x: find_cost_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3)
-    # result = minimize(objective, x0, method='SLSQP', jac=True, constraints=[linear_constraint], options={'disp': True,'maxiter':5000, 'ftol':1e-9, 'iprint':2, 'eps': 1e-4})
-    result = minimize(objective, x0, method='trust-constr', jac=True, hess=BFGS(), constraints=[linear_constraint], options={'disp': True,'maxiter':5000, 'verbose':3, 'initial_tr_radius':0.1})
+    result = minimize(objective, x0, method='SLSQP', jac=True, constraints=[linear_constraint], options={'disp': True,'maxiter':5000, 'ftol':1e-9, 'iprint':2, 'eps': 1e-4})
+    # result = minimize(objective, x0, method='trust-constr', jac=True, hess=BFGS(), constraints=[linear_constraint], options={'disp': True,'maxiter':5000, 'verbose':3, 'initial_tr_radius':0.1})
     
     return result 
+
+
+
+def find_cost(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3):
+    
+    _, w_so3_m2 = quadrature_rules['m2']
+    _, w_so3_m3 = quadrature_rules['m3']
+    # Phi = Phi_precomps['m2']
+    # Psi = Psi_precomps['m3']
+
+    # covert to jax array 
+    x, w_so3_m2, w_so3_m3 = jnp.array(x), jnp.array(w_so3_m2), jnp.array(w_so3_m3)
+
+    # compute the cost and gradient from the three moments
+    if l1>0:
+       cost1 = find_cost_m1(x, w_so3_m2, Phi_precomps['m2'], Psi_precomps['m2'], m1_emp, l1)
+    else:
+        cost1 = 0
+    if l2>0:
+        cost2 = find_cost_m2(x, w_so3_m2, Phi_precomps['m2'], Psi_precomps['m2'], m2_emp, l2)
+    else:
+        cost2 = 0
+    if l3>0:
+        cost3 = find_cost_m3(x, w_so3_m3, Phi_precomps['m3'], Psi_precomps['m3'], m3_emp, l3)
+    else:
+        cost3 = 0
+
+    cost = cost1+cost2+cost3 
+    return cost 
+
+
+def find_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3):
+    
+    _, w_so3_m2 = quadrature_rules['m2']
+    _, w_so3_m3 = quadrature_rules['m3']
+    # Phi = Phi_precomps['m2']
+    # Psi = Psi_precomps['m3']
+
+    # covert to jax array 
+    x, w_so3_m2, w_so3_m3 = jnp.array(x), jnp.array(w_so3_m2), jnp.array(w_so3_m3)
+
+    # compute the cost and gradient from the three moments
+    if l1>0:
+       grad1 = find_grad_m1(x, w_so3_m2, Phi_precomps['m2'], Psi_precomps['m2'], m1_emp, l1)
+    else:
+        grad1 = jnp.zeros(x.shape)
+    if l2>0:
+        grad2 = find_grad_m2(x, w_so3_m2, Phi_precomps['m2'], Psi_precomps['m2'], m2_emp, l2)
+    else:
+        grad2 = jnp.zeros(x.shape)
+    if l3>0:
+        cost3, grad3 = find_grad_m3(x, w_so3_m3, Phi_precomps['m3'], Psi_precomps['m3'], m3_emp, l3)
+    else:
+        grad3 = jnp.zeros(x.shape)
+
+
+    grad = grad1+grad2+grad3 
+    return grad
 
 
 def find_cost_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3):
@@ -150,7 +208,7 @@ def find_cost_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_e
     if l2>0:
         cost2, grad2 = find_cost_grad_m2(x, w_so3_m2, Phi_precomps['m2'], Psi_precomps['m2'], m2_emp, l2)
     else:
-        cost1, grad1 = 0, np.zeros(x.shape)
+        cost2, grad2 = 0, np.zeros(x.shape)
     if l3>0:
         cost3, grad3 = find_cost_grad_m3(x, w_so3_m3, Phi_precomps['m3'], Psi_precomps['m3'], m3_emp, l3)
     else:
@@ -159,6 +217,8 @@ def find_cost_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_e
     cost = cost1+cost2+cost3 
     grad = grad1+grad2+grad3 
     return np.array(cost), np.array(grad)
+
+
 
 # def find_cost_grad_m1(x, w_so3, Phi, Psi, m1_emp, l1):
     
@@ -213,6 +273,45 @@ def find_cost_m1(x, w_so3, Phi, Psi, m1_emp, l1):
     cost = norm(C1.flatten())**2 
     
     return cost / l1
+
+
+@jit 
+def find_grad_m1(x, w_so3, Phi, Psi, m1_emp, l1):
+    na = Phi.shape[2]
+    a, b = x[:na], x[na:]
+    b1 = jnp.concatenate([jnp.array([1.0]), b])
+    n = len(w_so3)
+    PCs = jnp.einsum('ijk,k->ij', Phi, a)
+    w = w_so3 * jnp.real(Psi @ b1)
+
+    m1_emp = m1_emp.flatten()
+    m1 = jnp.zeros(PCs.shape[1], dtype=jnp.complex128)
+    
+    def body_fun(i, m1):
+        return m1 + w[i] * PCs[i, :]
+    
+    m1 = jax.lax.fori_loop(0, n, body_fun, m1)
+    
+    C1 = m1 - m1_emp
+    C1_conj = jnp.conj(C1)
+    
+    
+    grad_a = jnp.zeros(Phi.shape[2])
+    grad_rho = jnp.zeros(n)
+    
+    def grad_body_fun(i, val):
+        grad_a, grad_rho = val
+        grad_a += 2 * w[i] * jnp.real(jnp.conj(Phi[i, :, :]).T @ C1)
+        grad_rho = grad_rho.at[i].set(2 * w_so3[i] * jnp.sum(jnp.real(PCs[i, :] * C1_conj)))
+        return grad_a, grad_rho
+    
+    grad_a, grad_rho = jax.lax.fori_loop(0, n, grad_body_fun, (grad_a, grad_rho))
+    
+    grad_b = jnp.conj(Psi).T @ grad_rho
+    grad = jnp.concatenate([grad_a, grad_b[1:]])
+    
+    return jnp.real(grad) / l1
+    
     
 
 
@@ -311,6 +410,49 @@ def find_cost_m2(x, w_so3, Phi, Psi, m2_emp, l2):
     C2 = m2 - m2_emp
     cost = norm(C2.flatten())**2 
     return cost / l2
+
+
+
+@jit 
+def find_grad_m2(x, w_so3, Phi, Psi, m2_emp, l2):
+    na = Phi.shape[2]
+    a, b = x[:na], x[na:]
+    b1 = jnp.concatenate([jnp.array([1.0]), b])
+    n = len(w_so3)
+    PCs = jnp.einsum('ijk,k->ij', Phi, a)
+    w = w_so3 * jnp.real(Psi @ b1)
+
+    d = PCs.shape[1]
+    m2 = jnp.zeros((d, d), dtype=jnp.complex128)
+    
+    def body_fun(i, m2):
+        Img = PCs[i, :].reshape((-1, 1))
+        PC_dot = Img @ jnp.conj(Img).T
+        return m2 + w[i] * PC_dot
+    
+    m2 = jax.lax.fori_loop(0, n, body_fun, m2)
+    
+    C2 = m2 - m2_emp
+    C2_conj = jnp.conj(C2)
+
+    
+    grad_a = jnp.zeros(Phi.shape[2])
+    grad_rho = jnp.zeros(n)
+    
+    def grad_body_fun(i, val):
+        grad_a, grad_rho = val
+        grad_a += 4 * w[i] * jnp.real(Phi[i, :, :].T @ (C2_conj @ jnp.conj(PCs[i, :])))
+        Img = PCs[i, :].reshape((-1, 1))
+        PC_dot = Img @ jnp.conj(Img).T  # Compute on-the-fly
+        grad_rho = grad_rho.at[i].set(2 * w_so3[i] * jnp.real(jnp.sum(PC_dot * C2_conj)))
+        return grad_a, grad_rho
+    
+    grad_a, grad_rho = jax.lax.fori_loop(0, n, grad_body_fun, (grad_a, grad_rho))
+    
+    grad_b = jnp.conj(Psi).T @ grad_rho
+    grad = jnp.concatenate([grad_a, grad_b[1:]])
+    
+    return jnp.real(grad) / l2
 
 
 @jit 
@@ -418,6 +560,50 @@ def find_cost_m3(x, w_so3, Phi, Psi, m3_emp, l3):
 
     cost = norm(C3.flatten())**2 
     return cost / l3
+
+
+@jit 
+def find_grad_m3(x, w_so3, Phi, Psi, m3_emp, l3):
+    na = Phi.shape[2]
+    a, b = x[:na], x[na:]
+    b1 = jnp.concatenate([jnp.array([1.0]), b])
+    n = len(w_so3)
+    PCs = jnp.einsum('ijk,k->ij', Phi, a)
+    w = w_so3 * jnp.real(Psi @ b1)
+
+    d = PCs.shape[1]
+    m3 = jnp.zeros((d, d, d), dtype=jnp.complex128)
+    
+    def body_fun(i, m3):
+        Img = PCs[i, :]
+        PC_dot = jnp.einsum('i,j,k->ijk', Img, Img, Img)
+        return m3 + w[i] * PC_dot
+    
+    m3 = jax.lax.fori_loop(0, n, body_fun, m3)
+    
+    C3 = m3 - m3_emp
+    C3_conj = jnp.conj(C3)
+    C3_conj_mat = C3_conj.reshape(d, d**2)
+
+    grad_a = jnp.zeros(Phi.shape[2])
+    grad_rho = jnp.zeros(n)
+    
+    def grad_body_fun(i, val):
+        grad_a, grad_rho = val
+        Img = PCs[i, :]
+        Img2 = jnp.einsum('i,j->ij', Img, Img)
+        tmp = C3_conj_mat @ Img2.flatten()
+        grad_a += 6 * w[i] * jnp.real(Phi[i, :, :].T @ tmp)
+        PC_dot = jnp.einsum('i,j,k->ijk', Img, Img, Img)  # Compute PC_dot on-the-fly
+        grad_rho = grad_rho.at[i].set(2 * w_so3[i] * jnp.real(jnp.sum(PC_dot * C3_conj)))
+        return grad_a, grad_rho
+    
+    grad_a, grad_rho = jax.lax.fori_loop(0, n, grad_body_fun, (grad_a, grad_rho))
+    
+    grad_b = jnp.conj(Psi).T @ grad_rho
+    grad = jnp.concatenate([grad_a, grad_b[1:]])
+    
+    return jnp.real(grad) / l3
 
 
 @jit 
@@ -604,4 +790,10 @@ def get_linear_ineqn_constraint(ell_max_half):
     Psi = Psi @ sph_r_t_c
     A = -Psi[:,1:]
     b = Psi[:,0]
-    return np.real(A), np.real(b), Psi 
+    return jnp.real(A), jnp.real(b), Psi 
+
+
+
+
+
+
