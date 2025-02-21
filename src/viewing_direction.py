@@ -29,7 +29,6 @@ def sample_sph_coef(N, spham_coef, ell_max_half, C=5.0):
 
     
     samples = np.zeros((N,3))
-    ell_max = 2*ell_max_half
 
     ncount = 0 
     while ncount<N:

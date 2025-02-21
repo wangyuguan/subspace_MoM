@@ -1,0 +1,33 @@
+2025-02-21 13:52:14,915 DEBUG [root] ASPIRE configuration directory is /Users/yuguan/.config/ASPIRE
+2025-02-21 13:52:14,916 DEBUG [root] ASPIRE configuration resolution details [({'logging': {'log_dir': '/Users/yuguan/software/subspace_MoM/test/logs'}}, ConfigSource(<super: <class 'ConfigSource'>, <ConfigSource object>>, None, False, False)), ({}, ConfigSource(<super: <class 'ConfigSource'>, <YamlSource object>>, '/Users/yuguan/.config/ASPIRE/config.yaml', False, False)), ({'version': '0.13.1', 'common': OrderedDict([('numeric', 'numpy'), ('fft', 'scipy'), ('cache_dir', '')]), 'logging': OrderedDict([('log_dir', 'logs'), ('log_exceptions', 1), ('tqdm_disable', False), ('console_level', 'INFO'), ('log_file_level', 'DEBUG'), ('log_prefix', 'aspire')]), 'nufft': OrderedDict([('backends', ['cufinufft', 'finufft', 'pynfft'])])}, ConfigSource(<super: <class 'ConfigSource'>, <YamlSource object>>, '/Users/yuguan/software/ASPIRE-Python/src/aspire/config_default.yaml', True, False))]
+2025-02-21 13:52:14,916 DEBUG [root] Resolved config.yaml:
+
+logging:
+    log_dir: /Users/yuguan/software/subspace_MoM/test/logs
+    log_exceptions: 1
+    tqdm_disable: no
+    console_level: INFO
+    log_file_level: DEBUG
+    log_prefix: aspire
+version: 0.13.1
+common:
+    numeric: numpy
+    fft: scipy
+    cache_dir: ''
+
+nufft:
+    backends: [cufinufft, finufft, pynfft]
+
+
+2025-02-21 13:52:15,669 DEBUG [jax._src.path] etils.epath found. Using etils.epath for file I/O.
+2025-02-21 13:52:16,275 DEBUG [aspire.nufft] nufft passed real_type for signal, converting
+2025-02-21 13:52:16,281 DEBUG [aspire.nufft] Trying NFFT backend cufinufft
+2025-02-21 13:52:16,282 DEBUG [aspire.nufft] NFFT backend cufinufft not usable:
+	No module named 'cupy'
+2025-02-21 13:52:16,282 DEBUG [aspire.nufft] Trying NFFT backend finufft
+2025-02-21 13:52:16,310 DEBUG [aspire.nufft] NFFT backend finufft usable.
+2025-02-21 13:52:16,310 DEBUG [aspire.nufft] Trying NFFT backend pynfft
+2025-02-21 13:52:16,310 DEBUG [aspire.nufft] NFFT backend pynfft not usable:
+	No module named 'pynfft'
+2025-02-21 13:52:16,310 DEBUG [aspire.nufft] Selected NFFT backend = finufft.
+2025-02-21 13:52:16,319 DEBUG [aspire.nufft.finufft] FinufftPlan adjusted eps=1.1920928955078125e-07 from requested 1e-08.

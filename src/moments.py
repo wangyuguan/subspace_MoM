@@ -9,8 +9,111 @@ from viewing_direction import *
 from volume import * 
 import e3x
 import scipy 
+import math 
+import time 
 from scipy.optimize import minimize, BFGS
 from scipy.linalg import svd
+from aspire.volume import Volume
+from aspire.utils.rotation import Rotation
+
+
+def momentPCA_rNLA(vol, rots, params):  
+    t_start = time.time() 
+    Ntot = rots.shape[0]
+    Nbat = 1000
+    r2_max = params['r2_max']
+    r3_max = params['r3_max']
+    tol2 = params['tol2']
+    tol3 = params['tol3']
+    ds_res = params['ds_res']
+    ds_res2 = ds_res**2
+    
+    G = np.random.normal(0,1,(ds_res2, r2_max))
+    G1 = np.random.normal(0,1,(ds_res2, r3_max))
+    G2 = np.random.normal(0,1,(ds_res2, r3_max))
+    nstream = math.ceil(Ntot/Nbat)
+
+    Vol = Volume(vol)
+    M2 = np.zeros((ds_res**2,r2_max))
+    M3 = np.zeros((ds_res**2,r3_max))
+    for i in range(nstream):
+        t1 = time.time()
+        print('sketching stream '+str(i+1)+' out of '+str(nstream)+' streams')
+        _rots = rots[((nstream-1)*Nbat):min((nstream*Nbat),Ntot),:,:]     
+        Rots = Rotation(_rots)
+        imags = Vol.project(Rots).downsample(ds_res=ds_res, zero_nyquist=False).asnumpy()
+        
+        for imag in imags:
+            I = imag.reshape(ds_res2, 1, order='F').astype(np.float64)
+            I_trans = I.T
+            M2 = M2 + I @ (I_trans @ G)/Ntot
+            M3 = M3 + I @ ((I_trans @ G1) * (I_trans @ G2))/Ntot 
+        t2 = time.time() 
+        print('spent '+str(t2-t1)+' seconds')
+    
+    U2, S2, _ = svd(M2, full_matrices=False)
+    r2 = np.argmax(np.cumsum(S2**2) / np.sum(S2**2) > (1 - tol2))
+    U2 = U2[:,0:r2]
+    U3, S3, _ = svd(M3, full_matrices=False)
+    r3 = np.argmax(np.cumsum(S3**2) / np.sum(S3**2) > (1 - tol3))
+    U3 = U3[:,0:r3]
+    
+    U2_fft = np.zeros(U2.shape, dtype=np.complex128)
+    for i in range(r2):
+        img = U2[:,i].reshape(ds_res, ds_res, order='F')
+        img_fft = centered_fft2(img)/ds_res 
+        U2_fft[:,i] = img_fft.flatten(order='F')
+        
+    U3_fft = np.zeros(U3.shape, dtype=np.complex128)
+    for i in range(r3):
+        img = U3[:,i].reshape(ds_res, ds_res, order='F')
+        img_fft = centered_fft2(img)/ds_res 
+        U3_fft[:,i] = img_fft.flatten(order='F')
+        
+    t_end = time.time() 
+    
+    return U2, U3, U2_fft, U3_fft, t_end-t_start 
+
+
+def form_subspace_moments(vol, rots, U2, U3):
+    t_start = time.time() 
+    ds_res2, r2 = U2.shape
+    ds_res = int(math.sqrt(ds_res2))
+    r3 = U3.shape[1]
+    Ntot = rots.shape[0]
+    Nbat = 1000
+    nstream = math.ceil(Ntot/Nbat)
+    
+    Vol = Volume(vol)
+    m1 = np.zeros((r2,1))
+    m2 = np.zeros((r2,r2))
+    m3 = np.zeros((r3,r3,r3))
+    for i in range(nstream):
+        t1 = time.time()
+        print('forming from stream '+str(i+1)+' out of '+str(nstream)+' streams')
+        _rots = rots[((nstream-1)*Nbat):min((nstream*Nbat),Ntot),:,:]     
+        Rots = Rotation(_rots)
+        imags = Vol.project(Rots).downsample(ds_res=ds_res, zero_nyquist=False).asnumpy()
+        
+        for imag in imags:
+            I = imag.reshape(ds_res2, 1, order='F').astype(np.float64)
+            I2 = U2.T @ I 
+            I3 = U3.T @ I 
+            I3 = I3.flatten()
+            m1 = m1+I2/Ntot 
+            m2 = m2+(I2@I2.T)/Ntot 
+            m3 = m3+np.einsum('i,j,k->ijk',I3,I3,I3)/Ntot 
+        t2 = time.time() 
+        print('spent '+str(t2-t1)+' seconds')
+    
+    
+    m1 = m1*ds_res 
+    m2 = m2*ds_res**2 
+    m3 = m3*ds_res**3 
+    t_end = time.time() 
+    
+    return m1,m2,m3,t_end-t_start 
+    
 
 
 def coef_t_subspace_moments(vol_coef, ell_max_vol, k_max, r0, indices_vol, rot_coef, ell_max_half_view, opts):
@@ -114,6 +217,7 @@ def coef_t_subspace_moments(vol_coef, ell_max_vol, k_max, r0, indices_vol, rot_c
     subMoMs['S2'] = S2
     subMoMs['S3'] = S3
     return subMoMs
+
 
 def moment_LS(x0, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, A_constr, b_constr, l1=None, l2=None, l3=None):
     
@@ -554,10 +658,7 @@ def find_cost_m3(x, w_so3, Phi, Psi, m3_emp, l3):
         return m3 + w[i] * PC_dot
     
     m3 = jax.lax.fori_loop(0, n, body_fun, m3)
-    
     C3 = m3 - m3_emp
-    C3_conj = jnp.conj(C3)
-
     cost = norm(C3.flatten())**2 
     return cost / l3
 

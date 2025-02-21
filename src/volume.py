@@ -8,6 +8,21 @@ import pymanopt
 
 
 
+def get_sphFB_indices(n,ell_max):
+    
+    k_max, r0 = calc_k_max(ell_max,n,3)
+    indices = {}
+
+    i = 0 
+    for ell in range(ell_max+1):
+        for k in range(k_max[ell]):
+            for m in range(-ell,ell+1):
+                indices[(ell,k,m)] = i
+                i += 1
+    return k_max, r0, indices
+        
+
+
 def sphFB_transform(vol, ell_max):
     """
     Project the volume into spherical Bessel basis 
