@@ -83,7 +83,7 @@ vol = vol[0]
 vol = vol/LA.norm(vol.flatten())
 
 
-ell_max_vol = 5
+ell_max_vol = 3
 # spherical bessel transform 
 vol_coef, k_max, r0, indices_vol = sphFB_transform(vol, ell_max_vol)
 sphFB_r_t_c, sphFB_c_t_r = get_sphFB_r_t_c_mat(ell_max_vol, k_max, indices_vol)

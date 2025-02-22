@@ -1,4 +1,5 @@
 import numpy as np 
+import finufft 
 from aspire.basis.basis_utils import lgwt 
 import e3x
 from scipy.linalg import eigh
@@ -687,9 +688,55 @@ def two_point_fd(f, x, h=1e-6):
 
 
 
+def vol_proj(vol, rots):
+    
+    nrot = rots.shape[0]
+    n = vol.shape[0]
+    if n % 2 == 0:
+        k = np.arange(-n/2,n/2)/n 
+    else:
+        k = np.arange(-(n-1)/2,(n-1)/2+1)/n
+    kx, ky = np.meshgrid(k, k, indexing='xy')
+    kx = kx.flatten(order='F')
+    ky = ky.flatten(order='F')
+    
+    rotated_grids = np.zeros((3,n**2,nrot))
+    for i in range(nrot):
+        rot = rots[i]
+        rotated_grids[:,:,i] = rot[:,0].reshape(-1, 1) @ kx.reshape(1,n**2)+rot[:,1].reshape(-1, 1) @ ky.reshape(1,n**2)
+        
+    s = 2*np.pi*rotated_grids[0].flatten(order='F')
+    t = 2*np.pi*rotated_grids[1].flatten(order='F')
+    u = 2*np.pi*rotated_grids[2].flatten(order='F')
+    
+    vol = np.array(vol, dtype=np.complex128)
+    vol = np.transpose(vol, (1, 0, 2))
+    vol = np.ascontiguousarray(vol)
+    Img_fft_rot = finufft.nufft3d2(s,t,u,vol)
+    Img_fft_rot = Img_fft_rot.reshape(n**2,nrot,order='F')
+    images = np.zeros((nrot,n,n))
+    for i in range(nrot):
+        images[i] = np.real(centered_ifft2(Img_fft_rot[:,i].reshape(n,n)))
+        
+    return images
 
+    
 
-
-
-
-
+def image_downsample(images, ds_res):
+    L = images.shape[1]
+    n = images.shape[0]
+    start_idx = (L // 2) - (ds_res // 2)
+    slice_idx = slice(start_idx, start_idx + ds_res)
+    images_ds = np.zeros([n,ds_res,ds_res])
+    for i in range(n):
+        img = images[i]
+        img_fft = centered_fft2(img)
+        img_fft = img_fft[slice_idx,slice_idx]
+        images_ds[i] = np.real(centered_ifft2(img_fft)*(ds_res**2 / n**2))
+        
+    return images_ds 
+    
+    
+    
+    
+    

@@ -13,8 +13,8 @@ import math
 import time 
 from scipy.optimize import minimize, BFGS
 from scipy.linalg import svd
-from aspire.volume import Volume
-from aspire.utils.rotation import Rotation
+#from aspire.volume import Volume
+#from aspire.utils.rotation import Rotation
 
 
 def momentPCA_rNLA(vol, rots, params):  
@@ -33,15 +33,17 @@ def momentPCA_rNLA(vol, rots, params):
     G2 = np.random.normal(0,1,(ds_res2, r3_max))
     nstream = math.ceil(Ntot/Nbat)
 
-    Vol = Volume(vol)
+    # Vol = Volume(vol)
     M2 = np.zeros((ds_res**2,r2_max))
     M3 = np.zeros((ds_res**2,r3_max))
     for i in range(nstream):
         t1 = time.time()
         print('sketching stream '+str(i+1)+' out of '+str(nstream)+' streams')
         _rots = rots[((nstream-1)*Nbat):min((nstream*Nbat),Ntot),:,:]     
-        Rots = Rotation(_rots)
-        imags = Vol.project(Rots).downsample(ds_res=ds_res, zero_nyquist=False).asnumpy()
+        # Rots = Rotation(_rots)
+        # imags = Vol.project(Rots).downsample(ds_res=ds_res, zero_nyquist=False).asnumpy()
+        imags = vol_proj(vol, _rots)
+        imags = image_downsample(imags, ds_res)
         
         for imag in imags:
             I = imag.reshape(ds_res2, 1, order='F').astype(np.float64)
@@ -84,7 +86,7 @@ def form_subspace_moments(vol, rots, U2, U3):
     Nbat = 1000
     nstream = math.ceil(Ntot/Nbat)
     
-    Vol = Volume(vol)
+    # Vol = Volume(vol)
     m1 = np.zeros((r2,1))
     m2 = np.zeros((r2,r2))
     m3 = np.zeros((r3,r3,r3))
@@ -92,8 +94,10 @@ def form_subspace_moments(vol, rots, U2, U3):
         t1 = time.time()
         print('forming from stream '+str(i+1)+' out of '+str(nstream)+' streams')
         _rots = rots[((nstream-1)*Nbat):min((nstream*Nbat),Ntot),:,:]     
-        Rots = Rotation(_rots)
-        imags = Vol.project(Rots).downsample(ds_res=ds_res, zero_nyquist=False).asnumpy()
+        # Rots = Rotation(_rots)
+        # imags = Vol.project(Rots).downsample(ds_res=ds_res, zero_nyquist=False).asnumpy()
+        imags = vol_proj(vol, _rots)
+        imags = image_downsample(imags, ds_res)
         
         for imag in imags:
             I = imag.reshape(ds_res2, 1, order='F').astype(np.float64)
@@ -798,7 +802,7 @@ def precomp_sphFB_all(U, ell_max, k_max, r0, indices, euler_nodes, grid):
             js = spherical_jn(ell, grid.rs*z0k/c)
             djs = spherical_jn(ell, z0k, True)
             js = js*np.sqrt(2/c**3)/abs(djs)
-            js[r_idx] = 0
+            # js[r_idx] = 0
             jlk[(ell,k)] = js 
 
     Yl = {} 
