@@ -689,7 +689,7 @@ def two_point_fd(f, x, h=1e-6):
 
 
 def vol_proj(vol, rots):
-    
+
     nrot = rots.shape[0]
     n = vol.shape[0]
     if n % 2 == 0:
@@ -708,15 +708,19 @@ def vol_proj(vol, rots):
     s = 2*np.pi*rotated_grids[0].flatten(order='F')
     t = 2*np.pi*rotated_grids[1].flatten(order='F')
     u = 2*np.pi*rotated_grids[2].flatten(order='F')
+
     
     vol = np.array(vol, dtype=np.complex128)
     vol = np.transpose(vol, (1, 0, 2))
     vol = np.ascontiguousarray(vol)
+
+    
     Img_fft_rot = finufft.nufft3d2(s,t,u,vol)
     Img_fft_rot = Img_fft_rot.reshape(n**2,nrot,order='F')
     images = np.zeros((nrot,n,n))
     for i in range(nrot):
         images[i] = np.real(centered_ifft2(Img_fft_rot[:,i].reshape(n,n)))
+
         
     return images
 

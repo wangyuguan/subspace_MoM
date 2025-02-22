@@ -17,11 +17,9 @@ from scipy.io import savemat
 
 with mrcfile.open('../data/emd_34948.map') as mrc:
     vol = mrc.data
+savemat('vol.mat',{'vol':vol})
 
-
-# savemat('vol.mat',{'vol':vol})
-np.random.seed(1)
-    
+np.random.seed(1)    
 nrot = 5 
 alpha = np.random.uniform(0,2*np.pi,nrot)
 beta = np.random.uniform(0,np.pi,nrot)
@@ -30,16 +28,16 @@ rots = np.zeros((nrot,3,3),dtype=np.float32)
 for i in range(nrot):
     rot = Rz(alpha[i]) @ Ry(beta[i]) @ Rz(gamma[i])
     rots[i,:,:] = rot
-# savemat('Rots.mat',{'Rots':rots})
+savemat('Rots.mat',{'Rots':rots})
     
 images = vol_proj(vol, rots)
 fig, axes = plt.subplots(1, nrot, figsize=(15, 5))
 for i, ax in enumerate(axes):
     ax.imshow(images[i], cmap='gray') 
     ax.axis('off')
-
 plt.tight_layout()
 plt.show()
+savemat('images.mat',{'images':images})
 
 
 ds_res = 64
@@ -51,6 +49,7 @@ for i, ax in enumerate(axes):
 
 plt.tight_layout()
 plt.show()
+savemat('images_ds.mat',{'images_ds':images_ds})
 
 '''
 n = vol.shape[0]

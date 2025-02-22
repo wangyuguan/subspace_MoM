@@ -755,7 +755,8 @@ def find_cost_grad_m3(x, w_so3, Phi, Psi, m3_emp, l3):
     grad = jnp.concatenate([grad_a, grad_b[1:]])
     
     return cost / l3 , jnp.real(grad) / l3
-    
+
+
 
 
 def precomputation(ell_max_vol, k_max, r0, indices_vol, ell_max_half_view, subspaces, quadrature_rules, grid):
