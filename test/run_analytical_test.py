@@ -70,7 +70,8 @@ b = b[1:]
 
 
 # get the spherical FB coefficient of the volume
-with mrcfile.open('../data/emd_34948.map') as mrc:
+# with mrcfile.open('../data/emd_34948.map') as mrc:
+with mrcfile.open('vol.mrc') as mrc:
     data = mrc.data
 
 
@@ -142,7 +143,7 @@ quadrature_rules['m3'] = load_so3_quadrature(3*ell_max_vol, 2*ell_max_half_view)
 Phi_precomps, Psi_precomps = precomputation(ell_max_vol, k_max, r0, indices_vol, ell_max_half_view, subspaces, quadrature_rules, grid)
 
 
-if False:
+if True:
     
     # constraints 
     xtrue =  np.concatenate([a,b])
@@ -224,6 +225,10 @@ if False:
     
     vol_est_m2_aligned = np.reshape(vol_est_m2_aligned, [ds_res,ds_res,ds_res])
     vol_est_m3_aligned = np.reshape(vol_est_m3_aligned, [ds_res,ds_res,ds_res])
+    
+    with mrcfile.new('vol_gt.mrc', overwrite=True) as mrc:
+        mrc.set_data(vol)  # Set the volume data
+        mrc.voxel_size = 1.0  
     
     with mrcfile.new('vol_est_m2_aligned.mrc', overwrite=True) as mrc:
         mrc.set_data(vol_est_m2_aligned)  # Set the volume data

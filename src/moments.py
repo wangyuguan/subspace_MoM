@@ -803,7 +803,7 @@ def precomp_sphFB_all(U, ell_max, k_max, r0, indices, euler_nodes, grid):
             js = spherical_jn(ell, grid.rs*z0k/c)
             djs = spherical_jn(ell, z0k, True)
             js = js*np.sqrt(2/c**3)/abs(djs)
-            # js[r_idx] = 0
+            js[r_idx] = 0
             jlk[(ell,k)] = js 
 
     Yl = {} 

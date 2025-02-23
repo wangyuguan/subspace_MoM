@@ -15,10 +15,25 @@ import mrcfile
 import finufft 
 from scipy.io import savemat
 
+ds_res = 64
 with mrcfile.open('../data/emd_34948.map') as mrc:
     vol = mrc.data
-savemat('vol.mat',{'vol':vol})
-
+# savemat('vol.mat',{'vol':vol})
+L = vol.shape[0];
+vol = vol/LA.norm(vol.flatten())
+vol_ds = vol_downsample(vol, ds_res)
+ell_max_vol = 3
+vol_coef, k_max, r0, indices_vol = sphFB_transform(vol_ds, ell_max_vol)
+vol_ds = coef_t_vol(vol_coef, ell_max_vol, ds_res, k_max, r0, indices_vol)
+vol_ds = vol_ds.reshape(ds_res,ds_res,ds_res,order='F')
+vol = vol_upsample(vol_ds,L)
+vol = np.array(vol, dtype=np.float32)
+with mrcfile.new('vol.mrc', overwrite=True) as mrc:
+    mrc.set_data(vol)  # Set the volume data
+    mrc.voxel_size = 1.0 
+vol_ds_ds = vol_downsample(vol,ds_res)
+print(LA.norm(vol_ds.flatten()-vol_ds_ds.flatten())/LA.norm(vol_ds.flatten()))
+    
 np.random.seed(1)    
 nrot = 5 
 alpha = np.random.uniform(0,2*np.pi,nrot)
@@ -28,7 +43,7 @@ rots = np.zeros((nrot,3,3),dtype=np.float32)
 for i in range(nrot):
     rot = Rz(alpha[i]) @ Ry(beta[i]) @ Rz(gamma[i])
     rots[i,:,:] = rot
-savemat('Rots.mat',{'Rots':rots})
+# savemat('Rots.mat',{'Rots':rots})
     
 images = vol_proj(vol, rots)
 fig, axes = plt.subplots(1, nrot, figsize=(15, 5))
@@ -37,10 +52,10 @@ for i, ax in enumerate(axes):
     ax.axis('off')
 plt.tight_layout()
 plt.show()
-savemat('images.mat',{'images':images})
+# savemat('images.mat',{'images':images})
 
 
-ds_res = 64
+
 images_ds = image_downsample(images, ds_res)
 fig, axes = plt.subplots(1, nrot, figsize=(15, 5))
 for i, ax in enumerate(axes):
@@ -49,7 +64,7 @@ for i, ax in enumerate(axes):
 
 plt.tight_layout()
 plt.show()
-savemat('images_ds.mat',{'images_ds':images_ds})
+# savemat('images_ds.mat',{'images_ds':images_ds})
 
 '''
 n = vol.shape[0]

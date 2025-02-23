@@ -400,6 +400,33 @@ def centered_ifft2(fft_img):
     return np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(fft_img)))  
 
 
+def centered_fftn(vol):
+    """
+    Compute the centered nD Fast Fourier Transform (FFT).
+
+    Parameters:
+        img (numpy array): nD input array (image or matrix).
+
+    Returns:
+        numpy array: Centered FFT of the input.
+    """
+    return np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(vol)))
+
+
+
+def centered_ifftn(fft_vol):
+    """
+    Compute the inverse centered nD Fast Fourier Transform (IFFT).
+
+    Parameters:
+        fft_img (numpy array): nD centered FFT array.
+
+    Returns:
+        numpy array: Reconstructed spatial domain array.
+    """
+    return np.fft.fftshift(np.fft.ifftn(np.fft.ifftshift(fft_vol)))  
+
+
 
 def wignerD(j, alpha, beta, gamma):
     """
@@ -686,6 +713,23 @@ def two_point_fd(f, x, h=1e-6):
     
     return grad
 
+def vol_downsample(vol, ds_res):
+    L = vol.shape[1]
+    start_idx = (L // 2) - (ds_res // 2)
+    slice_idx = slice(start_idx, start_idx + ds_res)
+    vol_fft = centered_fftn(vol)
+    vol_fft_ds = vol_fft[slice_idx,slice_idx,slice_idx]
+    return np.real(centered_ifftn(vol_fft_ds))*ds_res**3/L**3
+
+def vol_upsample(vol_ds, L):
+    ds_res = vol_ds.shape[0]
+    start_idx = (L // 2) - (ds_res // 2)
+    slice_idx = slice(start_idx, start_idx + ds_res)
+    vol_ds_fft = centered_fftn(vol_ds)
+    vol_fft = np.zeros([L,L,L],dtype=np.complex128)
+    vol_fft[slice_idx,slice_idx,slice_idx] = vol_ds_fft 
+    return np.real(centered_ifftn(vol_fft))*L**3/ds_res**3
+    
 
 
 def vol_proj(vol, rots):
@@ -711,7 +755,7 @@ def vol_proj(vol, rots):
 
     
     vol = np.array(vol, dtype=np.complex128)
-    vol = np.transpose(vol, (1, 0, 2))
+    # vol = np.transpose(vol, (1, 0, 2))
     vol = np.ascontiguousarray(vol)
 
     
@@ -736,11 +780,11 @@ def image_downsample(images, ds_res):
         img = images[i]
         img_fft = centered_fft2(img)
         img_fft = img_fft[slice_idx,slice_idx]
-        images_ds[i] = np.real(centered_ifft2(img_fft)*(ds_res**2 / n**2))
+        images_ds[i] = np.real(centered_ifft2(img_fft)*(ds_res**2 / L**2))
         
     return images_ds 
-    
-    
-    
+
+
+
     
     
