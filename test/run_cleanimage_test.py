@@ -5,6 +5,9 @@ from pathlib import Path
 # Add the 'src' directory to the Python path
 src_path = Path('../src').resolve()
 sys.path.append(str(src_path))
+src_path = Path('../../BOTalign').resolve()
+sys.path.append(str(src_path))
+
 
 from aspire.volume import Volume
 from aspire.utils.rotation import Rotation
@@ -23,17 +26,18 @@ np.random.seed(42)
 
 with mrcfile.open('../data/emd_34948.map') as mrc:
     vol = mrc.data
-#    vol = vol/LA.norm(vol.flatten())
+    vol = vol/LA.norm(vol.flatten())
     
 # preprocess the volume 
 L = vol.shape[0]
 ds_res = 64
 vol_ds = vol_downsample(vol, ds_res)
-ell_max_vol = 5
+ell_max_vol = 4
 vol_coef, k_max, r0, indices_vol = sphFB_transform(vol_ds, ell_max_vol)
 vol_ds = coef_t_vol(vol_coef, ell_max_vol, ds_res, k_max, r0, indices_vol)
 vol_ds = vol_ds.reshape(ds_res,ds_res,ds_res,order='F')
 vol = vol_upsample(vol_ds,L)
+vol = vol/LA.norm(vol.flatten())
 
 
 
@@ -53,7 +57,7 @@ sph_coef, indices_view = sph_harm_transform(my_fun, ell_max_half_view)
 
 
 # form moments 
-Ntot = 50000
+Ntot = 10000
 rots = np.zeros((Ntot,3,3),dtype=np.float32)
 print('sampling viewing directions')
 samples = sample_sph_coef(Ntot, sph_coef, ell_max_half_view)
@@ -65,7 +69,7 @@ for i in range(Ntot):
 
 params = {'r2_max':250, 'r3_max':100, 'tol2':1e-12, 'tol3':1e-10, 'ds_res':ds_res}
 U2, U3, U2_fft, U3_fft, t_sketch = momentPCA_rNLA(vol, rots, params)
-m1_emp, m2_emp, m3_emp, t_form = form_subspace_moments(vol, rots, U2, U3)
+m1_emp, m2_emp, m3_emp, t_form = form_subspace_moments(vol, rots, U2_fft, U3_fft)
 
 print(m1_emp.shape)
 print(m2_emp.shape)
@@ -131,16 +135,20 @@ vol_coef_est_m3 = sphFB_r_t_c @ a_est
 
 
 # save results
-savemat('cleanimag_test/res2.mat',res2)
-savemat('cleanimag_test/res3.mat',res3)
+savemat('cleanimage_test/res2.mat',res2)
+savemat('cleanimage_test/res3.mat',res3)
 vol_est_m2 = coef_t_vol(vol_coef_est_m2, ell_max_vol, ds_res, k_max, r0, indices_vol)
 vol_est_m3 = coef_t_vol(vol_coef_est_m3, ell_max_vol, ds_res, k_max, r0, indices_vol)
 
-with mrcfile.new('cleanimag_test/vol_est_m2.mrc', overwrite=True) as mrc:
+
+vol_est_m2 = vol_est_m2.reshape([ds_res,ds_res,ds_res])
+vol_est_m3 = vol_est_m3.reshape([ds_res,ds_res,ds_res])
+
+with mrcfile.new('cleanimage_test/vol_est_m2.mrc', overwrite=True) as mrc:
     mrc.set_data(vol_est_m2.reshape([ds_res,ds_res,ds_res]))  # Set the volume data
     mrc.voxel_size = 1.0  
 
-with mrcfile.new('cleanimag_test/vol_est_m3.mrc', overwrite=True) as mrc:
+with mrcfile.new('cleanimage_test/vol_est_m3.mrc', overwrite=True) as mrc:
     mrc.set_data(vol_est_m3.reshape([ds_res,ds_res,ds_res]))  # Set the volume data
     mrc.voxel_size = 1.0  
 
@@ -158,15 +166,15 @@ vol_ds = Vol_ds.asnumpy()
 vol2_aligned = Vol2.rotate(Rotation(R2)).asnumpy()
 vol3_aligned = Vol3.rotate(Rotation(R3)).asnumpy()
 
-with mrcfile.new('cleanimag_test/vol_ds.mrc', overwrite=True) as mrc:
+with mrcfile.new('cleanimage_test/vol_ds.mrc', overwrite=True) as mrc:
     mrc.set_data(vol_ds[0])  # Set the volume data
     mrc.voxel_size = 1.0  
 
-with mrcfile.new('cleanimag_test/vol_est_m2_aligned.mrc', overwrite=True) as mrc:
+with mrcfile.new('cleanimage_test/vol_est_m2_aligned.mrc', overwrite=True) as mrc:
     mrc.set_data(vol2_aligned[0])  # Set the volume data
     mrc.voxel_size = 1.0  
 
-with mrcfile.new('cleanimag_test/vol_est_m3_aligned.mrc', overwrite=True) as mrc:
+with mrcfile.new('cleanimage_test/vol_est_m3_aligned.mrc', overwrite=True) as mrc:
     mrc.set_data(vol3_aligned[0])  # Set the volume data
     mrc.voxel_size = 1.0  
 

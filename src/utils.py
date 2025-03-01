@@ -770,17 +770,23 @@ def vol_proj(vol, rots):
 
     
 
-def image_downsample(images, ds_res):
+def image_downsample(images, ds_res, if_real=True):
     L = images.shape[1]
     n = images.shape[0]
     start_idx = (L // 2) - (ds_res // 2)
     slice_idx = slice(start_idx, start_idx + ds_res)
-    images_ds = np.zeros([n,ds_res,ds_res])
+    if if_real:
+        images_ds = np.zeros([n,ds_res,ds_res])
+    else:
+        images_ds = np.zeros([n,ds_res,ds_res], dtype=np.complex128)
     for i in range(n):
         img = images[i]
         img_fft = centered_fft2(img)
         img_fft = img_fft[slice_idx,slice_idx]
-        images_ds[i] = np.real(centered_ifft2(img_fft)*(ds_res**2 / L**2))
+        if if_real:
+            images_ds[i] = np.real(centered_ifft2(img_fft)*(ds_res**2 / L**2))
+        else:
+            images_ds[i] = img_fft*(ds_res**2 / L**2)
         
     return images_ds 
 

@@ -13,7 +13,7 @@ from utils import *
 from viewing_direction import * 
 from volume import * 
 from moments import * 
-
+import time 
 
 import jax
 import jax.numpy as jnp
@@ -33,7 +33,7 @@ def my_fun(th,ph):
     grid = Grid_3d(type='spherical', ths=np.array([th]),phs=np.array([ph]))
     return 4*np.pi*vMF_density(centers,w_vmf,kappa,grid)[0]
 
-ell_max_half_view = 3
+ell_max_half_view = 2
 sph_coef, indices = sph_harm_transform(my_fun, ell_max_half_view)
 rot_coef = sph_t_rot_coef(sph_coef, ell_max_half_view)
 rot_coef[0] = 1
@@ -55,7 +55,7 @@ vol = Vol.asnumpy()
 vol = vol[0]
 
 
-ell_max_vol = 6
+ell_max_vol = 4
 # spherical bessel transform 
 vol_coef, k_max, r0, indices_vol = sphFB_transform(vol, ell_max_vol)
 sphFB_r_t_c, sphFB_c_t_r = get_sphFB_r_t_c_mat(ell_max_vol, k_max, indices_vol)
@@ -64,7 +64,7 @@ vol_coef = sphFB_r_t_c @ a
 
 
 # form the moments 
-r2_max = 200 
+r2_max = 10 
 r3_max = 60 
 tol2 = 1e-8
 tol3 = 1e-8 
@@ -97,107 +97,111 @@ Phi =  precomp_sphFB_all(U2, ell_max_vol, k_max, r0, indices_vol, euler_nodes, g
 Psi = precomp_wignerD_all(ell_max_half_view, euler_nodes)
 
 
-# test cost, gradient over the first moment at the ground truth 
-x0 = jnp.concatenate([a,b])
-l1 = LA.norm(m1_emp.flatten())**2
-cost0, grad0 = find_cost_grad_m1(x0, w_so3, Phi, Psi, m1_emp, l1)
-print(cost0, LA.norm(grad0))
 
+if False:
 
-# check gradient over the first moment via fdm  
-
-x = np.random.normal(0,1,x0.shape)
-l1 = 1 
-cost, grad = find_cost_grad_m1(x, w_so3, Phi, Psi, m1_emp, l1)
-
-
-def my_grad(x):
-    h = 1e-6 
-    I = jnp.eye(len(x))
-    grad = np.zeros(len(x))
-    for i in range(len(x)):
-        xph = x+h*I[i,:]
-        xmh = x-h*I[i,:]
-        costph = find_cost_m1(xph, w_so3, Phi, Psi, m1_emp, l1)
-        costmh = find_cost_m1(xmh, w_so3, Phi, Psi, m1_emp, l1)
-        grad[i] = (costph-costmh)/2/h 
-    return grad 
-
-grad_fdm = my_grad(x)
-
-LA.norm(grad-grad_fdm)/LA.norm(grad_fdm)
-
-
-# precomputation 
-
-euler_nodes, w_so3 = load_so3_quadrature(2*ell_max_vol, 2*ell_max_half_view)
-Phi =  precomp_sphFB_all(U2, ell_max_vol, k_max, r0, indices_vol, euler_nodes, grid)
-Psi = precomp_wignerD_all(ell_max_half_view, euler_nodes)
-
-
-l2 = LA.norm(m2_emp.flatten())**2
-cost0, grad0 = find_cost_grad_m2(x0, w_so3, Phi, Psi, m2_emp, l2)
-print(cost0, LA.norm(grad0))
-
-
-# check gradient over the second moment via fdm  
-
-x = np.random.normal(0,1,x0.shape)
-l2 = 1 
-cost, grad = find_cost_grad_m2(x, w_so3, Phi, Psi, m2_emp, l2)
-
-def my_grad(x):
-    h = 1e-6 
-    I = jnp.eye(len(x))
-    grad = np.zeros(len(x))
-    for i in range(len(x)):
-        xph = x+h*I[i,:]
-        xmh = x-h*I[i,:]
-        costph = find_cost_m2(xph, w_so3, Phi, Psi, m2_emp, l2)
-        costmh = find_cost_m2(xmh, w_so3, Phi, Psi, m2_emp, l2)
-        grad[i] = (costph-costmh)/2/h 
-    return grad 
-
-grad_fdm = my_grad(x)
-
-LA.norm(grad-grad_fdm)/LA.norm(grad_fdm)
-
-
-# precomputation 
-
-euler_nodes, w_so3 = load_so3_quadrature(3*ell_max_vol, 2*ell_max_half_view)
-Phi =  precomp_sphFB_all(U3, ell_max_vol, k_max, r0, indices_vol, euler_nodes, grid)
-Psi = precomp_wignerD_all(ell_max_half_view, euler_nodes)
-
-
-
-# test cost, gradient over the third moment at the ground truth 
-
-l3 = np.max(np.abs(m3_emp.flatten()))**2
-cost0, grad0 = find_cost_grad_m3(x0, w_so3, Phi, Psi, m3_emp, l3)
-print(cost0, LA.norm(grad0))
-
-
-# check gradient over the third moment via fdm  
-
-x = np.random.normal(0,1,x0.shape)
-l3 = 1
-cost, grad = find_cost_grad_m3(x, w_so3, Phi, Psi, m3_emp, l3)
-
-def my_grad(x):
-    h = 1e-6 
-    I = jnp.eye(len(x))
-    grad = np.zeros(len(x))
-    for i in range(len(x)):
-        xph = x+h*I[i,:]
-        xmh = x-h*I[i,:]
-        costph = find_cost_m3(xph, w_so3, Phi, Psi, m3_emp, l3)
-        costmh = find_cost_m3(xmh, w_so3, Phi, Psi, m3_emp, l3)
-        grad[i] = (costph-costmh)/2/h
-    return grad 
-
-grad_fdm = my_grad(x)
-
-LA.norm(grad-grad_fdm)/LA.norm(grad_fdm)
-
-
+    # test cost, gradient over the first moment at the ground truth 
+    x0 = jnp.concatenate([a,b])
+    l1 = LA.norm(m1_emp.flatten())**2
+    cost0, grad0 = find_cost_grad_m1(x0, w_so3, Phi, Psi, m1_emp, l1)
+    print(cost0, LA.norm(grad0))
+    
+    
+    
+    # check gradient over the first moment via fdm  
+    
+    x = np.random.normal(0,1,x0.shape)
+    l1 = 1 
+    cost, grad = find_cost_grad_m1(x, w_so3, Phi, Psi, m1_emp, l1)
+    
+    
+    def my_grad(x):
+        h = 1e-6 
+        I = jnp.eye(len(x))
+        grad = np.zeros(len(x))
+        for i in range(len(x)):
+            xph = x+h*I[i,:]
+            xmh = x-h*I[i,:]
+            costph = find_cost_m1(xph, w_so3, Phi, Psi, m1_emp, l1)
+            costmh = find_cost_m1(xmh, w_so3, Phi, Psi, m1_emp, l1)
+            grad[i] = (costph-costmh)/2/h 
+        return grad 
+    
+    grad_fdm = my_grad(x)
+    
+    LA.norm(grad-grad_fdm)/LA.norm(grad_fdm)
+    
+    
+    # precomputation 
+    
+    euler_nodes, w_so3 = load_so3_quadrature(2*ell_max_vol, 2*ell_max_half_view)
+    Phi =  precomp_sphFB_all(U2, ell_max_vol, k_max, r0, indices_vol, euler_nodes, grid)
+    Psi = precomp_wignerD_all(ell_max_half_view, euler_nodes)
+    
+    
+    l2 = LA.norm(m2_emp.flatten())**2
+    cost0, grad0 = find_cost_grad_m2(x0, w_so3, Phi, Psi, m2_emp, l2)
+    print(cost0, LA.norm(grad0))
+    
+    
+    # check gradient over the second moment via fdm  
+    
+    x = np.random.normal(0,1,x0.shape)
+    l2 = 1 
+    cost, grad = find_cost_grad_m2(x, w_so3, Phi, Psi, m2_emp, l2)
+    
+    def my_grad(x):
+        h = 1e-6 
+        I = jnp.eye(len(x))
+        grad = np.zeros(len(x))
+        for i in range(len(x)):
+            xph = x+h*I[i,:]
+            xmh = x-h*I[i,:]
+            costph = find_cost_m2(xph, w_so3, Phi, Psi, m2_emp, l2)
+            costmh = find_cost_m2(xmh, w_so3, Phi, Psi, m2_emp, l2)
+            grad[i] = (costph-costmh)/2/h 
+        return grad 
+    
+    grad_fdm = my_grad(x)
+    
+    LA.norm(grad-grad_fdm)/LA.norm(grad_fdm)
+    
+    
+    # precomputation 
+    
+    euler_nodes, w_so3 = load_so3_quadrature(3*ell_max_vol, 2*ell_max_half_view)
+    Phi =  precomp_sphFB_all(U3, ell_max_vol, k_max, r0, indices_vol, euler_nodes, grid)
+    Psi = precomp_wignerD_all(ell_max_half_view, euler_nodes)
+    
+    
+    
+    # test cost, gradient over the third moment at the ground truth 
+    
+    l3 = np.max(np.abs(m3_emp.flatten()))**2
+    cost0, grad0 = find_cost_grad_m3(x0, w_so3, Phi, Psi, m3_emp, l3)
+    print(cost0, LA.norm(grad0))
+    
+    
+    # check gradient over the third moment via fdm  
+    
+    x = np.random.normal(0,1,x0.shape)
+    l3 = 1
+    cost, grad = find_cost_grad_m3(x, w_so3, Phi, Psi, m3_emp, l3)
+    
+    def my_grad(x):
+        h = 1e-6 
+        I = jnp.eye(len(x))
+        grad = np.zeros(len(x))
+        for i in range(len(x)):
+            xph = x+h*I[i,:]
+            xmh = x-h*I[i,:]
+            costph = find_cost_m3(xph, w_so3, Phi, Psi, m3_emp, l3)
+            costmh = find_cost_m3(xmh, w_so3, Phi, Psi, m3_emp, l3)
+            grad[i] = (costph-costmh)/2/h
+        return grad 
+    
+    grad_fdm = my_grad(x)
+    
+    LA.norm(grad-grad_fdm)/LA.norm(grad_fdm)
+    
+    

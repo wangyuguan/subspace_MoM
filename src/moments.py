@@ -1,7 +1,7 @@
 import numpy as np 
 import numpy.linalg as LA 
 import jax
-from jax import jit
+from jax import jit,vmap
 import jax.numpy as jnp
 from jax.numpy.linalg import norm
 from utils import * 
@@ -15,6 +15,8 @@ from scipy.optimize import minimize, BFGS
 from scipy.linalg import svd
 #from aspire.volume import Volume
 #from aspire.utils.rotation import Rotation
+
+
 
 
 def momentPCA_rNLA(vol, rots, params):  
@@ -43,10 +45,10 @@ def momentPCA_rNLA(vol, rots, params):
         # Rots = Rotation(_rots)
         # imags = Vol.project(Rots).downsample(ds_res=ds_res, zero_nyquist=False).asnumpy()
         imags = vol_proj(vol, _rots)
-        imags = image_downsample(imags, ds_res)
+        imags = image_downsample(imags, ds_res, True)
         
         for imag in imags:
-            I = imag.reshape(ds_res2, 1, order='F').astype(np.float64)
+            I = imag.reshape(ds_res2, 1, order='F')
             I_trans = I.T
             M2 = M2 + I @ (I_trans @ G)/Ntot
             M3 = M3 + I @ ((I_trans @ G1) * (I_trans @ G2))/Ntot 
@@ -54,12 +56,13 @@ def momentPCA_rNLA(vol, rots, params):
         print('spent '+str(t2-t1)+' seconds')
     
     U2, S2, _ = svd(M2, full_matrices=False)
-    r2 = np.argmax(np.cumsum(S2**2) / np.sum(S2**2) > (1 - tol2))
+    r2 = np.argmax(np.cumsum(S2**2) / np.sum(S2**2) > (1 - tol2))+1
     U2 = U2[:,0:r2]
     U3, S3, _ = svd(M3, full_matrices=False)
-    r3 = np.argmax(np.cumsum(S3**2) / np.sum(S3**2) > (1 - tol3))
+    r3 = np.argmax(np.cumsum(S3**2) / np.sum(S3**2) > (1 - tol3))+1
     U3 = U3[:,0:r3]
-    
+
+   
     U2_fft = np.zeros(U2.shape, dtype=np.complex128)
     for i in range(r2):
         img = U2[:,i].reshape(ds_res, ds_res, order='F')
@@ -77,11 +80,13 @@ def momentPCA_rNLA(vol, rots, params):
     return U2, U3, U2_fft, U3_fft, t_end-t_start 
 
 
-def form_subspace_moments(vol, rots, U2, U3):
+
+
+def form_subspace_moments(vol, rots, U2_fft, U3_fft):
     t_start = time.time() 
-    ds_res2, r2 = U2.shape
+    ds_res2, r2 = U2_fft.shape
     ds_res = int(math.sqrt(ds_res2))
-    r3 = U3.shape[1]
+    r3 = U3_fft.shape[1]
     Ntot = rots.shape[0]
     Nbat = 1000
     nstream = math.ceil(Ntot/Nbat)
@@ -97,23 +102,23 @@ def form_subspace_moments(vol, rots, U2, U3):
         # Rots = Rotation(_rots)
         # imags = Vol.project(Rots).downsample(ds_res=ds_res, zero_nyquist=False).asnumpy()
         imags = vol_proj(vol, _rots)
-        imags = image_downsample(imags, ds_res)
+        imags = image_downsample(imags, ds_res, False)
         
         for imag in imags:
-            I = imag.reshape(ds_res2, 1, order='F').astype(np.float64)
-            I2 = U2.T @ I 
-            I3 = U3.T @ I 
+            I = imag.reshape(ds_res2, 1, order='F')
+            I2 = np.conj(U2_fft).T @ I 
+            I3 = np.conj(U3_fft).T @ I 
             I3 = I3.flatten()
             m1 = m1+I2/Ntot 
-            m2 = m2+(I2@I2.T)/Ntot 
+            m2 = m2+(I2 @ np.conj(I2).T)/Ntot 
             m3 = m3+np.einsum('i,j,k->ijk',I3,I3,I3)/Ntot 
         t2 = time.time() 
         print('spent '+str(t2-t1)+' seconds')
     
     
-    m1 = m1*ds_res 
-    m2 = m2*ds_res**2 
-    m3 = m3*ds_res**3 
+    # m1 = m1*ds_res 
+    # m2 = m2*ds_res**2 
+    # m3 = m3*ds_res**3 
     t_end = time.time() 
     
     return m1,m2,m3,t_end-t_start 
@@ -269,6 +274,8 @@ def find_cost(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m
     return cost 
 
 
+
+
 def find_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3):
     
     _, w_so3_m2 = quadrature_rules['m2']
@@ -296,6 +303,8 @@ def find_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m
 
     grad = grad1+grad2+grad3 
     return grad
+
+
 
 
 def find_cost_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3):
@@ -381,6 +390,8 @@ def find_cost_m1(x, w_so3, Phi, Psi, m1_emp, l1):
     cost = norm(C1.flatten())**2 
     
     return cost / l1
+
+
 
 
 @jit 
@@ -521,6 +532,7 @@ def find_cost_m2(x, w_so3, Phi, Psi, m2_emp, l2):
 
 
 
+
 @jit 
 def find_grad_m2(x, w_so3, Phi, Psi, m2_emp, l2):
     na = Phi.shape[2]
@@ -561,6 +573,8 @@ def find_grad_m2(x, w_so3, Phi, Psi, m2_emp, l2):
     grad = jnp.concatenate([grad_a, grad_b[1:]])
     
     return jnp.real(grad) / l2
+
+
 
 
 @jit 
@@ -667,6 +681,8 @@ def find_cost_m3(x, w_so3, Phi, Psi, m3_emp, l3):
     return cost / l3
 
 
+
+
 @jit 
 def find_grad_m3(x, w_so3, Phi, Psi, m3_emp, l3):
     na = Phi.shape[2]
@@ -709,6 +725,8 @@ def find_grad_m3(x, w_so3, Phi, Psi, m3_emp, l3):
     grad = jnp.concatenate([grad_a, grad_b[1:]])
     
     return jnp.real(grad) / l3
+
+
 
 
 @jit 
@@ -777,6 +795,9 @@ def precomputation(ell_max_vol, k_max, r0, indices_vol, ell_max_half_view, subsp
 
     return Phi_precomps, Psi_precomps
 
+
+
+
 def precomp_sphFB_all(U, ell_max, k_max, r0, indices, euler_nodes, grid):
     
     c = 0.5 
@@ -832,6 +853,8 @@ def precomp_sphFB_all(U, ell_max, k_max, r0, indices, euler_nodes, grid):
     return jnp.array(Phi_precomp)
 
 
+
+
 def precomp_wignerD_all(ell_max_half, euler_nodes):
     ell_max = 2*ell_max_half
     n_grid = euler_nodes.shape[0]
@@ -855,6 +878,7 @@ def precomp_wignerD_all(ell_max_half, euler_nodes):
     Psi_precomp = np.real(Psi_precomp @ sph_r_t_c)
     
     return jnp.array(Psi_precomp)
+
 
 
 

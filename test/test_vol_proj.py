@@ -14,6 +14,9 @@ import matplotlib.pyplot as plt
 import mrcfile 
 import finufft 
 from scipy.io import savemat
+import time 
+import jax
+import jax.numpy as jnp
 
 ds_res = 64
 with mrcfile.open('../data/emd_34948.map') as mrc:
@@ -35,7 +38,7 @@ vol_ds_ds = vol_downsample(vol,ds_res)
 print(LA.norm(vol_ds.flatten()-vol_ds_ds.flatten())/LA.norm(vol_ds.flatten()))
     
 np.random.seed(1)    
-nrot = 5 
+nrot = 1000
 alpha = np.random.uniform(0,2*np.pi,nrot)
 beta = np.random.uniform(0,np.pi,nrot)
 gamma = np.random.uniform(0,2*np.pi,nrot)
@@ -45,26 +48,72 @@ for i in range(nrot):
     rots[i,:,:] = rot
 # savemat('Rots.mat',{'Rots':rots})
     
+ds_res2 = ds_res**2
 images = vol_proj(vol, rots)
-fig, axes = plt.subplots(1, nrot, figsize=(15, 5))
-for i, ax in enumerate(axes):
-    ax.imshow(images[i], cmap='gray') 
-    ax.axis('off')
-plt.tight_layout()
-plt.show()
-# savemat('images.mat',{'images':images})
+images = vol_downsample(images, ds_res)
+r2 = 200
+r3 = 50
+G = np.random.normal(0,1,(ds_res2,r2))
+G1 = np.random.normal(0,1,(ds_res2,r3))
+G2 = np.random.normal(0,1,(ds_res2,r3))
+M2 = 0 
+M3 = 0 
+Ntot  = 1000
+
+t1 = time.time()
+for imag in images:
+    I = imag.reshape(ds_res2, 1, order='F').astype(np.float64)
+    I_trans = I.T
+    M2 = M2 + I @ (I_trans @ G)/Ntot
+    M3 = M3 + I @ ((I_trans @ G1) * (I_trans @ G2))/Ntot 
+t2 = time.time()
+print(t2-t1)
 
 
+t1 = time.time()
+_M2 = 0 
+_M3 = 0 
+nimag = images.shape[0]
+images = jnp.array(images)
+I_all = jnp.transpose(images, (0, 2, 1)).reshape(nimag, ds_res2).astype(jnp.float64)
+I_all = I_all[..., None]
+I_all_T = jnp.transpose(I_all, (0, 2, 1))
+_M2 = _M2 +  jnp.sum(jnp.matmul(I_all, jnp.matmul(I_all_T, G)), axis=0) / Ntot
+_M3 = _M3 +  jnp.sum(jnp.matmul(I_all, (jnp.matmul(I_all_T, G1) * jnp.matmul(I_all_T, G2))), axis=0) / Ntot
+t2 = time.time()
+print(t2-t1)
 
-images_ds = image_downsample(images, ds_res)
-fig, axes = plt.subplots(1, nrot, figsize=(15, 5))
-for i, ax in enumerate(axes):
-    ax.imshow(images_ds[i], cmap='gray') 
-    ax.axis('off')
 
-plt.tight_layout()
-plt.show()
-# savemat('images_ds.mat',{'images_ds':images_ds})
+U2 = np.random.normal(0,1,(ds_res2,r2))
+U3 = np.random.normal(0,1,(ds_res2,r3))
+m1 = np.zeros((r2,1))
+m2 = np.zeros((r2,r2))
+m3 = np.zeros((r3,r3,r3))
+t1 = time.time()
+for imag in images:
+    I = imag.reshape(ds_res2, 1, order='F').astype(np.float64)
+    I2 = U2.T @ I 
+    I3 = U3.T @ I 
+    I3 = I3.flatten()
+    m1 = m1+I2/Ntot 
+    m2 = m2+(I2@I2.T)/Ntot 
+    m3 = m3+np.einsum('i,j,k->ijk',I3,I3,I3)/Ntot 
+t2 = time.time()
+print(t2-t1)
+
+_m1 = jnp.zeros((r2,1))
+_m2 = jnp.zeros((r2,r2))
+_m3 = jnp.zeros((r3,r3,r3))
+t1 = time.time()
+I_all = jnp.transpose(images, (0, 2, 1)).reshape(images.shape[0], ds_res2).astype(jnp.float64)
+I2_all = jnp.tensordot(I_all, U2, axes=([1], [0]))  
+I3_all = jnp.tensordot(I_all, U3, axes=([1], [0]))  
+_m1 = _m1 + jnp.sum(I2_all, axis=0).reshape(r2,1) / Ntot  
+_m2 = _m2 + jnp.einsum('ni,nj->ij', I2_all, I2_all) / Ntot  
+_m3 = _m3 + jnp.einsum('ni,nj,nk->ijk', I3_all, I3_all, I3_all) / Ntot
+t2 = time.time()
+print(t2-t1)
+
 
 '''
 n = vol.shape[0]
