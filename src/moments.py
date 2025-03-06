@@ -19,15 +19,11 @@ from scipy.linalg import svd
 
 
 
-def momentPCA_rNLA(vol, rots, params):  
+def momentPCA_rNLA(vol, rots, r2_max, r3_max, tol2, tol3, ds_res, s):  
     t_start = time.time() 
+    L = vol.shape[0]
     Ntot = rots.shape[0]
     Nbat = 1000
-    r2_max = params['r2_max']
-    r3_max = params['r3_max']
-    tol2 = params['tol2']
-    tol3 = params['tol3']
-    ds_res = params['ds_res']
     ds_res2 = ds_res**2
     
     G = np.random.normal(0,1,(ds_res2, r2_max))
@@ -36,6 +32,7 @@ def momentPCA_rNLA(vol, rots, params):
     nstream = math.ceil(Ntot/Nbat)
 
     # Vol = Volume(vol)
+    M1 = np.zeros((ds_res**2,1))
     M2 = np.zeros((ds_res**2,r2_max))
     M3 = np.zeros((ds_res**2,r3_max))
     for i in range(nstream):
@@ -44,17 +41,32 @@ def momentPCA_rNLA(vol, rots, params):
         _rots = rots[((nstream-1)*Nbat):min((nstream*Nbat),Ntot),:,:]     
         # Rots = Rotation(_rots)
         # imags = Vol.project(Rots).downsample(ds_res=ds_res, zero_nyquist=False).asnumpy()
-        imags = vol_proj(vol, _rots)
+        imags = vol_proj(vol, _rots, s, i)
         imags = image_downsample(imags, ds_res, True)
         
         for imag in imags:
             I = imag.reshape(ds_res2, 1, order='F')
             I_trans = I.T
+            M1 = M1 + I/Ntot 
             M2 = M2 + I @ (I_trans @ G)/Ntot
             M3 = M3 + I @ ((I_trans @ G1) * (I_trans @ G2))/Ntot 
         t2 = time.time() 
         print('spent '+str(t2-t1)+' seconds')
-    
+        
+    if s>0:
+        H = get_preprocessing_matrix(L, ds_res)
+        B2 = s**2 * H @ (np.conj(H.T) @ G)
+        B3 = 0 
+        M1_trans = M1.T 
+        for i in range(L**2):
+            Hi = H[:,i].reshape(-1,1)
+            Hi_trans = Hi.T
+            B3 = B3 + s**2 * M1@((Hi_trans @ G1)*(Hi_trans @ G2))
+            B3 = B3 + s**2 * Hi@((M1_trans @ G1)*(Hi_trans @ G2))
+            B3 = B3 + s**2 * Hi@((Hi_trans @ G1)*(M1_trans @ G2))
+        M2 = M2-B2 
+        M3 = M3-B3 
+        
     U2, S2, _ = svd(M2, full_matrices=False)
     r2 = np.argmax(np.cumsum(S2**2) / np.sum(S2**2) > (1 - tol2))+1
     U2 = U2[:,0:r2]
@@ -82,8 +94,9 @@ def momentPCA_rNLA(vol, rots, params):
 
 
 
-def form_subspace_moments(vol, rots, U2_fft, U3_fft):
+def form_subspace_moments(vol, rots, U2_fft, U3_fft, s):
     t_start = time.time() 
+    L = vol.shape[0]
     ds_res2, r2 = U2_fft.shape
     ds_res = int(math.sqrt(ds_res2))
     r3 = U3_fft.shape[1]
@@ -93,6 +106,8 @@ def form_subspace_moments(vol, rots, U2_fft, U3_fft):
     
     # Vol = Volume(vol)
     m1 = np.zeros((r2,1))
+    if s>0:
+        U3_M1 = np.zeros((r3,1),dtype=np.complex128)
     m2 = np.zeros((r2,r2))
     m3 = np.zeros((r3,r3,r3))
     for i in range(nstream):
@@ -101,21 +116,39 @@ def form_subspace_moments(vol, rots, U2_fft, U3_fft):
         _rots = rots[((nstream-1)*Nbat):min((nstream*Nbat),Ntot),:,:]     
         # Rots = Rotation(_rots)
         # imags = Vol.project(Rots).downsample(ds_res=ds_res, zero_nyquist=False).asnumpy()
-        imags = vol_proj(vol, _rots)
+        imags = vol_proj(vol, _rots, s, i)
         imags = image_downsample(imags, ds_res, False)
         
         for imag in imags:
             I = imag.reshape(ds_res2, 1, order='F')
             I2 = np.conj(U2_fft).T @ I 
             I3 = np.conj(U3_fft).T @ I 
+            if s>0:
+                U3_M1 = U3_M1+I3/Ntot 
             I3 = I3.flatten()
             m1 = m1+I2/Ntot 
             m2 = m2+(I2 @ np.conj(I2).T)/Ntot 
             m3 = m3+np.einsum('i,j,k->ijk',I3,I3,I3)/Ntot 
+            
         t2 = time.time() 
         print('spent '+str(t2-t1)+' seconds')
-    
-    
+        
+    if s>0:
+        H = get_preprocessing_matrix(L, ds_res)
+        b2 = np.conj(U2_fft.T) @ H 
+        b2 = s**2 * (b2 @ np.conj(b2.T))
+        
+        b3 = 0 
+        U3_M1 = U3_M1.flatten(order='F')
+        for i in range(L**2):
+            Hi = H[:,i].reshape(-1,1)
+            U3_Hi = (np.conj(U3_fft).T @ Hi).flatten(order='F')
+            b3 = b3+s**2 * np.einsum('i,j,k->ijk', U3_M1, U3_Hi, U3_Hi)
+            b3 = b3+s**2 * np.einsum('i,j,k->ijk', U3_Hi, U3_M1, U3_Hi)
+            b3 = b3+s**2 * np.einsum('i,j,k->ijk', U3_Hi, U3_Hi, U3_M1)
+        
+        m2 = m2-b2 
+        m3 = m3-b3 
     # m1 = m1*ds_res 
     # m2 = m2*ds_res**2 
     # m3 = m3*ds_res**3 

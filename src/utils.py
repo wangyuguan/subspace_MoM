@@ -3,6 +3,7 @@ import finufft
 from aspire.basis.basis_utils import lgwt 
 import e3x
 from scipy.linalg import eigh
+import numpy.linalg as LA 
 
 
 class Grid_2d:
@@ -732,7 +733,7 @@ def vol_upsample(vol_ds, L):
     
 
 
-def vol_proj(vol, rots):
+def vol_proj(vol, rots, std, seed):
 
     nrot = rots.shape[0]
     n = vol.shape[0]
@@ -762,9 +763,10 @@ def vol_proj(vol, rots):
     Img_fft_rot = finufft.nufft3d2(s,t,u,vol)
     Img_fft_rot = Img_fft_rot.reshape(n**2,nrot,order='F')
     images = np.zeros((nrot,n,n))
+    np.random.seed(seed)
     for i in range(nrot):
         images[i] = np.real(centered_ifft2(Img_fft_rot[:,i].reshape(n,n)))
-
+        images[i] = images[i] + np.random.normal(0,std,(n,n))
         
     return images
 
@@ -792,5 +794,80 @@ def image_downsample(images, ds_res, if_real=True):
 
 
 
+def get_subindices(D, d):
+    ds_start = np.floor(D / 2) - np.floor(d / 2)
+    ds_idx = np.arange(int(ds_start) + 1, int(ds_start) + d + 1)  # MATLAB 1-based index to Python 0-based
+
+    ind1, ind2 = np.meshgrid(ds_idx, ds_idx, indexing='ij')  # MATLAB-style grid
+    ind1 = ind1.ravel(order='F')  # Flatten in column-major order
+    ind2 = ind2.ravel(order='F')
+
+    ind = np.ravel_multi_index((ind1 - 1, ind2 - 1), (D, D), order='F')  # Convert to 0-based index
+
+    return ind
+
+
+
+def get_centered_fft2_submtx(n, row_id=None, col_id=None):
+    if n % 2 == 0:
+        k = np.arange(-n//2, n//2) / n
+    else:
+        k = np.arange(-(n-1)//2, (n-1)//2 + 1) / n
     
+    k1, k2 = np.meshgrid(k, k, indexing='xy')  # Ensure MATLAB-like meshgrid behavior
+    k1 = k1.ravel(order='F')  # Flatten in column-major order
+    k2 = k2.ravel(order='F')
+
+    if row_id is not None and len(row_id) > 0:
+        k1 = k1[row_id]
+        k2 = k2[row_id]
     
+    if n % 2 == 0:
+        x = 2 * np.pi * np.arange(-n//2, n//2)
+    else:
+        x = 2 * np.pi * np.arange(-(n-1)//2, (n-1)//2 + 1)
+
+    x1, x2 = np.meshgrid(x, x, indexing='xy')  # Again, use MATLAB-like behavior
+    x1 = x1.ravel(order='F')  # Flatten in column-major order
+    x2 = x2.ravel(order='F')
+
+    if col_id is not None and len(col_id) > 0:
+        x1 = x1[col_id]
+        x2 = x2[col_id]
+
+    F2 = np.exp(-1j * (np.outer(k1, x1) + np.outer(k2, x2)))
+
+    return F2
+    
+
+def get_preprocessing_matrix(D,d):
+    ind = get_subindices(D, d)
+    F = get_centered_fft2_submtx(D, row_id=ind)
+    f = get_centered_fft2_submtx(d)
+    return np.conj(f.T) @ F / D**2 
+
+
+def get_estimated_std(vol, SNR):
+    n_rot = 100 
+    rots = np.zeros((n_rot,3,3))
+    
+    for i in range(n_rot):
+        alpha = np.random.uniform(0,2*np.pi)
+        beta = np.random.uniform(0,np.pi)
+        gamma = np.random.uniform(0,2*np.pi)
+        R = Rz(alpha) @ Ry(beta) @ Rz(gamma)
+        rots[i,:,:] = R
+
+    images = vol_proj(vol, rots, 0, 1)
+    gauss_noise = np.random.normal(0,1,images.shape)
+
+    s = 0 
+    for i in range(n_rot):
+      s = s+np.sqrt(LA.norm(images[i],'fro')/SNR/LA.norm(gauss_noise[i],'fro'))/n_rot 
+
+    return s 
+    
+
+
+
+
