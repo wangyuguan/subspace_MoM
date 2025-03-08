@@ -762,11 +762,12 @@ def vol_proj(vol, rots, std, seed):
     
     Img_fft_rot = finufft.nufft3d2(s,t,u,vol)
     Img_fft_rot = Img_fft_rot.reshape(n**2,nrot,order='F')
-    images = np.zeros((nrot,n,n))
+    images = np.zeros((nrot,n,n), dtype=np.complex128)
     np.random.seed(seed)
     for i in range(nrot):
-        images[i] = np.real(centered_ifft2(Img_fft_rot[:,i].reshape(n,n)))
-        images[i] = images[i] + np.random.normal(0,std,(n,n))
+        images[i] = centered_ifft2(Img_fft_rot[:,i].reshape(n,n))
+        if std>0:
+          images[i] = images[i] + np.random.normal(0,std,(n,n))
         
     return images
 
@@ -778,7 +779,7 @@ def image_downsample(images, ds_res, if_real=True):
     start_idx = (L // 2) - (ds_res // 2)
     slice_idx = slice(start_idx, start_idx + ds_res)
     if if_real:
-        images_ds = np.zeros([n,ds_res,ds_res])
+        images_ds = np.zeros([n,ds_res,ds_res], dtype=np.complex128)
     else:
         images_ds = np.zeros([n,ds_res,ds_res], dtype=np.complex128)
     for i in range(n):
@@ -786,7 +787,7 @@ def image_downsample(images, ds_res, if_real=True):
         img_fft = centered_fft2(img)
         img_fft = img_fft[slice_idx,slice_idx]
         if if_real:
-            images_ds[i] = np.real(centered_ifft2(img_fft)*(ds_res**2 / L**2))
+            images_ds[i] = centered_ifft2(img_fft)*(ds_res**2 / L**2)
         else:
             images_ds[i] = img_fft*(ds_res**2 / L**2)
         
@@ -845,6 +846,7 @@ def get_preprocessing_matrix(D,d):
     F = get_centered_fft2_submtx(D, row_id=ind)
     f = get_centered_fft2_submtx(d)
     return np.conj(f.T) @ F / D**2 
+    # return F 
 
 
 def get_estimated_std(vol, SNR):

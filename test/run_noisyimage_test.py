@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+import os 
 
 
 # Add the 'src' directory to the Python path
@@ -24,6 +25,12 @@ from utils_BO import align_BO
 
 np.random.seed(42)
 
+
+folder_name = "noisyimage_test"
+
+if not os.path.exists(folder_name):
+    os.makedirs(folder_name)
+
 with mrcfile.open('../data/emd_34948.map') as mrc:
     vol = mrc.data
     vol = vol/LA.norm(vol.flatten())
@@ -32,7 +39,7 @@ with mrcfile.open('../data/emd_34948.map') as mrc:
 L = vol.shape[0]
 ds_res = 64
 vol_ds = vol_downsample(vol, ds_res)
-ell_max_vol = 4
+ell_max_vol = 5
 vol_coef, k_max, r0, indices_vol = sphFB_transform(vol_ds, ell_max_vol)
 vol_ds = coef_t_vol(vol_coef, ell_max_vol, ds_res, k_max, r0, indices_vol)
 vol_ds = vol_ds.reshape(ds_res,ds_res,ds_res,order='F')
@@ -57,8 +64,9 @@ sph_coef, indices_view = sph_harm_transform(my_fun, ell_max_half_view)
 
 
 # form moments 
-Ntot = 10000
+Ntot = 50000
 rots = np.zeros((Ntot,3,3),dtype=np.float32)
+
 print('sampling viewing directions')
 samples = sample_sph_coef(Ntot, sph_coef, ell_max_half_view)
 print('done')
@@ -67,19 +75,24 @@ for i in range(Ntot):
     _, beta, alpha = cart2sph(samples[i,0], samples[i,1], samples[i,2])
     rots[i,:,:] = Rz(alpha) @ Ry(beta) @ Rz(gamma[i])
 
-r2_max = 250
-r3_max = 100 
-tol2 = 1e-12 
-tol3 = 1e-10
-ds_res = ds_res
-SNR = 1000
+r2_max = 220
+r3_max = 80
+tol2 = 1e-10 
+tol3 = 1e-8
+SNR = 1
 std = get_estimated_std(vol, SNR)
-U2, U3, U2_fft, U3_fft, t_sketch = momentPCA_rNLA(vol, rots, r2_max, r3_max, tol2, tol3, ds_res, 0)
-m1_emp, m2_emp, m3_emp, t_form = form_subspace_moments(vol, rots, U2_fft, U3_fft, 0)
+
+U2, U3, U2_fft, U3_fft, M1, M2, M3 = momentPCA_rNLA(vol, rots, r2_max, r3_max, tol2, tol3, ds_res, std)
+m1_emp, m2_emp, m3_emp = form_subspace_moments(vol, rots, U2_fft, U3_fft, std)
+
+
 
 print(m1_emp.shape)
 print(m2_emp.shape)
 print(m3_emp.shape)
+
+
+savemat('noisyimage_test/MoMs.mat',{'m1_emp':m1_emp, 'm2_emp':m2_emp, 'm3_emp':m3_emp, 'U2_fft':U2_fft, 'U3_fft':U3_fft})
 
 
 # precomputation 

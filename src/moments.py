@@ -20,25 +20,26 @@ from scipy.linalg import svd
 
 
 def momentPCA_rNLA(vol, rots, r2_max, r3_max, tol2, tol3, ds_res, s):  
-    t_start = time.time() 
+
     L = vol.shape[0]
     Ntot = rots.shape[0]
     Nbat = 1000
     ds_res2 = ds_res**2
     
+    np.random.seed(42)
     G = np.random.normal(0,1,(ds_res2, r2_max))
     G1 = np.random.normal(0,1,(ds_res2, r3_max))
     G2 = np.random.normal(0,1,(ds_res2, r3_max))
     nstream = math.ceil(Ntot/Nbat)
 
     # Vol = Volume(vol)
-    M1 = np.zeros((ds_res**2,1))
-    M2 = np.zeros((ds_res**2,r2_max))
-    M3 = np.zeros((ds_res**2,r3_max))
+    M1 = np.zeros((ds_res**2,1),dtype=np.complex128)
+    M2 = np.zeros((ds_res**2,r2_max),dtype=np.complex128)
+    M3 = np.zeros((ds_res**2,r3_max),dtype=np.complex128)
     for i in range(nstream):
         t1 = time.time()
         print('sketching stream '+str(i+1)+' out of '+str(nstream)+' streams')
-        _rots = rots[((nstream-1)*Nbat):min((nstream*Nbat),Ntot),:,:]     
+        _rots = rots[(i*Nbat):min(((i+1)*Nbat),Ntot),:,:]     
         # Rots = Rotation(_rots)
         # imags = Vol.project(Rots).downsample(ds_res=ds_res, zero_nyquist=False).asnumpy()
         imags = vol_proj(vol, _rots, s, i)
@@ -56,15 +57,25 @@ def momentPCA_rNLA(vol, rots, r2_max, r3_max, tol2, tol3, ds_res, s):
     if s>0:
         H = get_preprocessing_matrix(L, ds_res)
         B2 = s**2 * H @ (np.conj(H.T) @ G)
-        B3 = 0 
-        M1_trans = M1.T 
-        for i in range(L**2):
-            Hi = H[:,i].reshape(-1,1)
-            Hi_trans = Hi.T
-            B3 = B3 + s**2 * M1@((Hi_trans @ G1)*(Hi_trans @ G2))
-            B3 = B3 + s**2 * Hi@((M1_trans @ G1)*(Hi_trans @ G2))
-            B3 = B3 + s**2 * Hi@((Hi_trans @ G1)*(M1_trans @ G2))
         M2 = M2-B2 
+
+        # B3 = 0 
+        # M1_trans = M1.T 
+        # for i in range(L**2):
+        #     Hi = H[:,i].reshape(-1,1)
+        #     Hi_trans = Hi.T
+        #     B3 = B3 + s**2 * M1@((Hi_trans @ G1)*(Hi_trans @ G2))
+        #     B3 = B3 + s**2 * Hi@((M1_trans @ G1)*(Hi_trans @ G2))
+        #     B3 = B3 + s**2 * Hi@((Hi_trans @ G1)*(M1_trans @ G2))
+
+        X = H.T @ G1        
+        Y = H.T @ G2        
+        A = M1.T @ G1       
+        B = M1.T @ G2      
+        term1 = M1 @ np.sum(X * Y, axis=0, keepdims=True) 
+        term2 = H @ (A * Y)  
+        term3 = H @ (X * B)  
+        B3 = s**2 * (term1 + term2 + term3) 
         M3 = M3-B3 
         
     U2, S2, _ = svd(M2, full_matrices=False)
@@ -87,15 +98,14 @@ def momentPCA_rNLA(vol, rots, r2_max, r3_max, tol2, tol3, ds_res, s):
         img_fft = centered_fft2(img)/ds_res 
         U3_fft[:,i] = img_fft.flatten(order='F')
         
-    t_end = time.time() 
     
-    return U2, U3, U2_fft, U3_fft, t_end-t_start 
+    return U2, U3, U2_fft, U3_fft, M1, M2, M3 
 
 
 
 
 def form_subspace_moments(vol, rots, U2_fft, U3_fft, s):
-    t_start = time.time() 
+
     L = vol.shape[0]
     ds_res2, r2 = U2_fft.shape
     ds_res = int(math.sqrt(ds_res2))
@@ -113,7 +123,7 @@ def form_subspace_moments(vol, rots, U2_fft, U3_fft, s):
     for i in range(nstream):
         t1 = time.time()
         print('forming from stream '+str(i+1)+' out of '+str(nstream)+' streams')
-        _rots = rots[((nstream-1)*Nbat):min((nstream*Nbat),Ntot),:,:]     
+        _rots = rots[(i*Nbat):min((i+1)*Nbat,Ntot),:,:]     
         # Rots = Rotation(_rots)
         # imags = Vol.project(Rots).downsample(ds_res=ds_res, zero_nyquist=False).asnumpy()
         imags = vol_proj(vol, _rots, s, i)
@@ -135,26 +145,29 @@ def form_subspace_moments(vol, rots, U2_fft, U3_fft, s):
         
     if s>0:
         H = get_preprocessing_matrix(L, ds_res)
+
         b2 = np.conj(U2_fft.T) @ H 
         b2 = s**2 * (b2 @ np.conj(b2.T))
-        
-        b3 = 0 
-        U3_M1 = U3_M1.flatten(order='F')
-        for i in range(L**2):
-            Hi = H[:,i].reshape(-1,1)
-            U3_Hi = (np.conj(U3_fft).T @ Hi).flatten(order='F')
-            b3 = b3+s**2 * np.einsum('i,j,k->ijk', U3_M1, U3_Hi, U3_Hi)
-            b3 = b3+s**2 * np.einsum('i,j,k->ijk', U3_Hi, U3_M1, U3_Hi)
-            b3 = b3+s**2 * np.einsum('i,j,k->ijk', U3_Hi, U3_Hi, U3_M1)
-        
         m2 = m2-b2 
+        
+        # b3 = 0 
+        # U3_M1 = U3_M1.flatten(order='F')
+        # for i in range(L**2):
+        #     Hi = H[:,i].reshape(-1,1)
+        #     U3_Hi = (np.conj(U3_fft).T @ Hi).flatten(order='F')
+        #     b3 = b3+s**2 * np.einsum('i,j,k->ijk', U3_M1, U3_Hi, U3_Hi)
+        #     b3 = b3+s**2 * np.einsum('i,j,k->ijk', U3_Hi, U3_M1, U3_Hi)
+        #     b3 = b3+s**2 * np.einsum('i,j,k->ijk', U3_Hi, U3_Hi, U3_M1)
+        U3_H = np.conj(U3_fft).T @ H 
+        U3_M1 = U3_M1.flatten(order='F')
+        term1 = np.einsum('i,jm,km->ijk', U3_M1, U3_H, U3_H)
+        term2 = np.einsum('im,j,km->ijk', U3_H, U3_M1, U3_H)
+        term3 = np.einsum('im,jm,k->ijk', U3_H, U3_H, U3_M1)
+        b3 = s**2 * (term1 + term2 + term3)
         m3 = m3-b3 
-    # m1 = m1*ds_res 
-    # m2 = m2*ds_res**2 
-    # m3 = m3*ds_res**3 
-    t_end = time.time() 
-    
-    return m1,m2,m3,t_end-t_start 
+
+
+    return m1,m2,m3
     
 
 
