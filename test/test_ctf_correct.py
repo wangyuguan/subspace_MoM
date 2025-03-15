@@ -19,17 +19,18 @@ from aspire.utils import Rotation
 from aspire.operators import RadialCTFFilter
 from aspire.ctf import estimate_ctf
 from aspire.basis import FFBBasis2D
+from aspire.noise import WhiteNoiseAdder
 from aspire.covariance import RotCov2D
 from aspire.source import Simulation
 from aspire.denoising.denoiser_cov2d import DenoiserCov2D
 
 np.random.seed(42)
-
+dtype = np.float32
 
 # %% load volume data 
 with mrcfile.open('../data/emd_34948.map') as mrc:
     vol = mrc.data
-    vol = vol/LA.norm(vol.flatten())
+    vol = vol/np.max(vol)
 
 img_size = vol.shape[0]
 Vol = Volume(vol)
@@ -37,15 +38,18 @@ Vol = Volume(vol)
 
 
 # %% generate euler angles for rotation 
-nimage  = 1000
+nimage  = 1024
+
+
 angles = np.zeros((nimage,3))
 angles[:,0] = np.random.uniform(0,2*np.pi,nimage)
 angles[:,1] = np.arccos(np.random.uniform(-1,1,nimage))
 angles[:,2] = np.random.uniform(0,2*np.pi,nimage)
 
 
+
 # %% ctf functions
-pixel_size = 1 
+pixel_size = 5 
 voltage = 200  # Voltage (in KV)
 defocus_min = 1.5e4  # Minimum defocus value (in angstroms)
 defocus_max = 2.5e4  # Maximum defocus value (in angstroms)
@@ -58,8 +62,16 @@ ctf_filters = [
 ]
 
 # %% create image generator 
-sim = Simulation(L=img_size, n=nimage, vols=Vol, angles=angles, offsets = 0, 
-                 unique_filters=ctf_filters)
+noise_var = 1.3957e-4
+noise_adder = WhiteNoiseAdder(var=noise_var)
+sim = Simulation(L=img_size,
+                 n=nimage,
+                 vols=Vol, 
+                 offsets = 0, 
+                 unique_filters=ctf_filters, 
+                 amplitudes=1.0, 
+                 noise_adder=noise_adder,
+                 angles=angles)
 
 
 # visualize images with CTF effect 
@@ -73,7 +85,7 @@ plt.tight_layout()
 plt.show()
 
 # %% expand images using basis 
-ffbbasis = FFBBasis2D((img_size, img_size), dtype = np.float32)
+ffbbasis = FFBBasis2D((img_size, img_size), dtype = dtype)
 
 # Assign the CTF information and index for each image
 h_idx = sim.filter_indices
@@ -104,8 +116,38 @@ covar_coef_est = cov2d.get_covar(
     h_ctf_fb,
     h_idx,
     mean_coef_est,
-    noise_var=0,
     covar_est_opt=covar_opt,
-    make_psd=True
+    noise_var=noise_var
 )
+
+
+
+# %% get the estimated denoised images 
+coef_est = cov2d.get_cwf_coefs(
+    coef,
+    h_ctf_fb,
+    h_idx,
+    mean_coef=mean_coef_est,
+    covar_coef=covar_coef_est,
+    noise_var=noise_var,
+)
+
+
+# Convert Fourier-Bessel coefficients back into 2D images
+Imgs_est = ffbbasis.evaluate(coef_est)
+
+
+
+# visualize denoised images images with CTF effect 
+Images = sim.images[:]
+images_denoised = Imgs_est.asnumpy()
+fig, axes = plt.subplots(2, 5, figsize=(15, 6))
+
+for i, ax in enumerate(axes.flatten()):
+    im = ax.imshow(images_denoised[i], cmap='gray')
+plt.tight_layout()
+plt.show()
+
+
+
 
