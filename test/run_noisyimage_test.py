@@ -31,9 +31,11 @@ folder_name = "noisyimage_test"
 if not os.path.exists(folder_name):
     os.makedirs(folder_name)
 
+jax.config.update('jax_platform_name', 'cpu')
+
 with mrcfile.open('../data/emd_34948.map') as mrc:
     vol = mrc.data
-    vol = vol/LA.norm(vol.flatten())
+    # vol = vol/LA.norm(vol.flatten())
     
 # preprocess the volume 
 L = vol.shape[0]
@@ -64,7 +66,7 @@ sph_coef, indices_view = sph_harm_transform(my_fun, ell_max_half_view)
 
 
 # form moments 
-Ntot = 50000
+Ntot = 10000
 rots = np.zeros((Ntot,3,3),dtype=np.float32)
 
 print('sampling viewing directions')
@@ -75,12 +77,13 @@ for i in range(Ntot):
     _, beta, alpha = cart2sph(samples[i,0], samples[i,1], samples[i,2])
     rots[i,:,:] = Rz(alpha) @ Ry(beta) @ Rz(gamma[i])
 
-r2_max = 220
-r3_max = 80
+r2_max = 200
+r3_max = 60
 tol2 = 1e-10 
 tol3 = 1e-8
 SNR = 1
-std = get_estimated_std(vol, SNR)
+std = get_estimated_std(vol, SNR)*0
+print(std)
 
 U2, U3, U2_fft, U3_fft, M1, M2, M3 = momentPCA_rNLA(vol, rots, r2_max, r3_max, tol2, tol3, ds_res, std)
 m1_emp, m2_emp, m3_emp = form_subspace_moments(vol, rots, U2_fft, U3_fft, std)
@@ -124,7 +127,7 @@ x20 = None
 l1 = LA.norm(m1_emp.flatten())**2
 l2 = LA.norm(m2_emp.flatten())**2
 l3 = LA.norm(m3_emp.flatten())**2
-for i in range(5):
+for i in range(1):
     a0 = 1e-6*np.random.normal(0,1,na)
     centers = np.random.normal(0,1,size=(c,3))
     centers /= LA.norm(centers, axis=1, keepdims=True)

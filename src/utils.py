@@ -865,7 +865,7 @@ def get_estimated_std(vol, SNR):
 
     s = 0 
     for i in range(n_rot):
-      s = s+np.sqrt(LA.norm(images[i],'fro')/SNR/LA.norm(gauss_noise[i],'fro'))/n_rot 
+      s = s+np.sqrt(LA.norm(images[i],'fro')**2/SNR/LA.norm(gauss_noise[i],'fro')**2)/n_rot 
 
     return s 
     

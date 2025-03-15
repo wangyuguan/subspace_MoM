@@ -13,14 +13,15 @@ import math
 import time 
 from scipy.optimize import minimize, BFGS
 from scipy.linalg import svd
-#from aspire.volume import Volume
-#from aspire.utils.rotation import Rotation
+from aspire.volume import Volume 
+from aspire.utils import Rotation
 
 
 
 
 def momentPCA_rNLA(vol, rots, r2_max, r3_max, tol2, tol3, ds_res, s):  
-
+    
+    Vol = Volume(np.array(vol,dtype=np.float32))
     L = vol.shape[0]
     Ntot = rots.shape[0]
     Nbat = 1000
@@ -41,12 +42,15 @@ def momentPCA_rNLA(vol, rots, r2_max, r3_max, tol2, tol3, ds_res, s):
         print('sketching stream '+str(i+1)+' out of '+str(nstream)+' streams')
         _rots = rots[(i*Nbat):min(((i+1)*Nbat),Ntot),:,:]     
         # Rots = Rotation(_rots)
-        # imags = Vol.project(Rots).downsample(ds_res=ds_res, zero_nyquist=False).asnumpy()
-        imags = vol_proj(vol, _rots, s, i)
-        imags = image_downsample(imags, ds_res, True)
+        # images = Vol.project(Rots).downsample(ds_res=ds_res, zero_nyquist=False).asnumpy()
         
-        for imag in imags:
-            I = imag.reshape(ds_res2, 1, order='F')
+        
+        # images = vol_proj(vol, _rots, s, i)
+        images = Vol.project(Rotation(_rots)).asnumpy()*L
+        images = image_downsample(images, ds_res, True)
+        
+        for image in images:
+            I = image.reshape(ds_res2, 1, order='F')
             I_trans = I.T
             M1 = M1 + I/Ntot 
             M2 = M2 + I @ (I_trans @ G)/Ntot
@@ -102,10 +106,9 @@ def momentPCA_rNLA(vol, rots, r2_max, r3_max, tol2, tol3, ds_res, s):
     return U2, U3, U2_fft, U3_fft, M1, M2, M3 
 
 
-
-
 def form_subspace_moments(vol, rots, U2_fft, U3_fft, s):
-
+    
+    Vol = Volume(np.array(vol,dtype=np.float32))
     L = vol.shape[0]
     ds_res2, r2 = U2_fft.shape
     ds_res = int(math.sqrt(ds_res2))
@@ -126,11 +129,13 @@ def form_subspace_moments(vol, rots, U2_fft, U3_fft, s):
         _rots = rots[(i*Nbat):min((i+1)*Nbat,Ntot),:,:]     
         # Rots = Rotation(_rots)
         # imags = Vol.project(Rots).downsample(ds_res=ds_res, zero_nyquist=False).asnumpy()
-        imags = vol_proj(vol, _rots, s, i)
-        imags = image_downsample(imags, ds_res, False)
+
+        # imags = vol_proj(vol, _rots, s, i)
+        images = Vol.project(Rotation(_rots)).asnumpy()*L
+        images = image_downsample(images, ds_res, False)
         
-        for imag in imags:
-            I = imag.reshape(ds_res2, 1, order='F')
+        for image in images:
+            I = image.reshape(ds_res2, 1, order='F')
             I2 = np.conj(U2_fft).T @ I 
             I3 = np.conj(U3_fft).T @ I 
             if s>0:
@@ -165,7 +170,6 @@ def form_subspace_moments(vol, rots, U2_fft, U3_fft, s):
         term3 = np.einsum('im,jm,k->ijk', U3_H, U3_H, U3_M1)
         b3 = s**2 * (term1 + term2 + term3)
         m3 = m3-b3 
-
 
     return m1,m2,m3
     
@@ -285,8 +289,8 @@ def moment_LS(x0, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, 
     
     linear_constraint = {'type': 'ineq', 'fun': lambda x: b_constr - A_constr @ x}
     objective = lambda x: find_cost_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3)
-    result = minimize(objective, x0, method='SLSQP', jac=True, constraints=[linear_constraint], options={'disp': True,'maxiter':5000, 'ftol':1e-9, 'iprint':2, 'eps': 1e-4})
-    # result = minimize(objective, x0, method='trust-constr', jac=True, hess=BFGS(), constraints=[linear_constraint], options={'disp': True,'maxiter':5000, 'verbose':3, 'initial_tr_radius':0.1})
+    result = minimize(objective, x0, method='SLSQP', jac=True, constraints=[linear_constraint],
+        options={'disp': True,'maxiter':5000, 'ftol':1e-9, 'iprint':2, 'eps': 1e-4})
     
     return result 
 
@@ -296,8 +300,6 @@ def find_cost(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m
     
     _, w_so3_m2 = quadrature_rules['m2']
     _, w_so3_m3 = quadrature_rules['m3']
-    # Phi = Phi_precomps['m2']
-    # Psi = Psi_precomps['m3']
 
     # covert to jax array 
     x, w_so3_m2, w_so3_m3 = jnp.array(x), jnp.array(w_so3_m2), jnp.array(w_so3_m3)
@@ -326,8 +328,6 @@ def find_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m
     
     _, w_so3_m2 = quadrature_rules['m2']
     _, w_so3_m3 = quadrature_rules['m3']
-    # Phi = Phi_precomps['m2']
-    # Psi = Psi_precomps['m3']
 
     # covert to jax array 
     x, w_so3_m2, w_so3_m3 = jnp.array(x), jnp.array(w_so3_m2), jnp.array(w_so3_m3)
