@@ -65,7 +65,7 @@ sim = Simulation(L=img_size, n=nimage, vols=Vol, angles=angles, offsets = 0,
                  unique_filters=ctf_filters)
 
 
-# %% visualize images with CTF effect 
+# visualize images with CTF effect 
 Images = sim.images[:]
 images_ctf = Images.asnumpy()
 fig, axes = plt.subplots(2, 5, figsize=(15, 6))
