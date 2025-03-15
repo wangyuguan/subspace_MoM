@@ -106,5 +106,6 @@ covar_coef_est = cov2d.get_covar(
     mean_coef_est,
     noise_var=0,
     covar_est_opt=covar_opt,
+    make_psd=True
 )
 
