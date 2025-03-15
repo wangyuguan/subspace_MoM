@@ -11,11 +11,8 @@ import numpy as np
 import numpy.linalg as LA 
 import matplotlib.pyplot as plt
 import mrcfile 
-import finufft 
 from scipy.io import savemat
 import time 
-import jax
-import jax.numpy as jnp
 from aspire.volume import Volume 
 from aspire.image import Image
 from aspire.utils import Rotation
