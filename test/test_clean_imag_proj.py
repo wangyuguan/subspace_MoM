@@ -22,57 +22,30 @@ import mrcfile
 from scipy.io import savemat 
 from utils_BO import align_BO
 
-np.random.seed(42)
+
 
 with mrcfile.open('../data/emd_34948.map') as mrc:
     vol = mrc.data
     vol = vol/LA.norm(vol.flatten())
     
-L = vol.shape[0]
-ds_res = 64
-vol_ds = vol_downsample(vol, ds_res)
-with mrcfile.new('vol_ds.mrc', overwrite=True) as mrc:
-    mrc.set_data(vol_ds)  # Set the volume data
-    mrc.voxel_size = 1.0  
-    
-    
-
-'''
-    
-ell_max_vol = 8
-vol_coef, k_max, r0, indices_vol = sphFB_transform(vol_ds, ell_max_vol)
-vol_ds = coef_t_vol(vol_coef, ell_max_vol, ds_res, k_max, r0, indices_vol)
-vol = vol_ds.reshape(ds_res,ds_res,ds_res,order='F')
-
-
-
-
-vol = vol.reshape([ds_res,ds_res,ds_res])
-
-with mrcfile.new('vol_L8.mrc', overwrite=True) as mrc:
-    mrc.set_data(vol)  # Set the volume data
-    mrc.voxel_size = 1.0  
-
-
-
-
 rots = np.zeros((10,3,3))
 for i in range(10):
-    alpha = np.random.uniform(0,2*np.pi)
-    beta = np.random.uniform(0,np.pi)
+    alpha = 2
+    beta = 1.3
     gamma = np.random.uniform(0,2*np.pi)
     rots[i] = Rz(alpha) @ Ry(beta) @ Rz(gamma)
     
-I_projs = vol_proj(vol, rots)
+I_projs = np.real(vol_proj(vol, rots, 0, 1))
 
 
-plt.imshow(I_projs[2], cmap='gray')
-plt.axis('off')  # Hide axes
+fig, axes = plt.subplots(2, 5, figsize=(15, 6))
+
+for i, ax in enumerate(axes.flatten()):
+    im = ax.imshow(I_projs[i], cmap='gray')
+plt.tight_layout()
 plt.show()
 
+    
 
-plt.imshow(I_projs[9], cmap='gray')
-plt.axis('off')  # Hide axes
-plt.show()
 
-'''
+
