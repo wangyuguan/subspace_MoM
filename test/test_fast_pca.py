@@ -47,7 +47,7 @@ eps = 1e-3
 # %% load volume data 
 with mrcfile.open('../data/emd_34948.map') as mrc:
     vol = mrc.data
-    vol = vol/np.max(vol)
+    vol = vol/LA.norm(vol.flatten())
 
 img_size = vol.shape[0]
 Vol = Volume(vol)
@@ -87,7 +87,7 @@ source_ctf_clean = Simulation(
 
 
 # determine noise variance to create noisy images with certain SNR
-sn_ratio = .1 
+sn_ratio = 10 
 noise_var = utils.get_noise_var_batch(source_ctf_clean, sn_ratio, batch_size)
 
 # create noise filter
@@ -106,6 +106,8 @@ source = Simulation(
     dtype=dtype,
     noise_adder=noise_adder,
 )
+
+
 
 
 # %% create fast PCA 
@@ -135,6 +137,7 @@ t2 = time.time()
 print(t2-t1)
 
 
+
 # %% denoise per defocus group 
 n = 0
 for i in range(defocus_ct):
@@ -151,10 +154,12 @@ for i in range(defocus_ct):
     print('perform denoising ...')
     t1 = time.time()
     results = fast_pca.denoise_images(mean_est=mean_est, covar_est=covar_est, denoise_options=denoise_options)
+    print(int(num_imgs/defocus_ct)+1, results["denoised_images"].shape)
     t2 = time.time()
     print(t2-t1)
     
     n += len(results["denoised_images"])
+print(n)
 
 # %% visualization 
 imgs_gt = results["clean_images"]

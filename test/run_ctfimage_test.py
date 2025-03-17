@@ -14,7 +14,7 @@ sys.path.append(str(src_path))
 
 from aspire.volume import Volume
 from aspire.utils.rotation import Rotation
-from aspire.basis import FBBasis3D
+from aspire.source.simulation import Simulation
 from aspire.operators import RadialCTFFilter
 from aspire.noise import WhiteNoiseAdder
 from utils import * 
@@ -26,6 +26,7 @@ import matplotlib.pyplot as plt
 import mrcfile 
 from scipy.io import savemat 
 from utils_BO import align_BO
+import utils_cwf_fast_batch as utils
 
 np.random.seed(42)
 
@@ -39,22 +40,23 @@ jax.config.update('jax_platform_name', 'cpu')
 
 with mrcfile.open('../data/emd_34948.map') as mrc:
     vol = mrc.data
-    # vol = vol/LA.norm(vol.flatten())
     
-# preprocess the volume 
-L = vol.shape[0]
+    
+# %% preprocess the volume 
+img_size = vol.shape[0]
 ds_res = 64
 vol_ds = vol_downsample(vol, ds_res)
 ell_max_vol = 5
 vol_coef, k_max, r0, indices_vol = sphFB_transform(vol_ds, ell_max_vol)
 vol_ds = coef_t_vol(vol_coef, ell_max_vol, ds_res, k_max, r0, indices_vol)
 vol_ds = vol_ds.reshape(ds_res,ds_res,ds_res,order='F')
-vol = vol_upsample(vol_ds,L)
+vol = vol_upsample(vol_ds,img_size)
 vol = vol/LA.norm(vol.flatten())
+Vol= Volume(np.array(vol, dtype=np.float32))
 
 
 
-# set up viewing direction distribution 
+# %% set up viewing direction distribution 
 c = 10
 centers = np.random.normal(0,1,size=(c,3))
 centers /= LA.norm(centers, axis=1, keepdims=True)
@@ -69,40 +71,91 @@ sph_coef, indices_view = sph_harm_transform(my_fun, ell_max_half_view)
 
 
 
-# form moments 
-Ntot = 10000
-rots = np.zeros((Ntot,3,3),dtype=np.float32)
+# %% generate angles 
+N = 5000
+batch_size = 100
+angles = np.zeros((N,3),dtype=np.float32)
 
 print('sampling viewing directions')
-samples = sample_sph_coef(Ntot, sph_coef, ell_max_half_view)
+samples = sample_sph_coef(N, sph_coef, ell_max_half_view)
 print('done')
-gamma = np.random.uniform(0,2*np.pi,Ntot)
-for i in range(Ntot):
+gamma = np.random.uniform(0,2*np.pi,N)
+for i in range(N):
     _, beta, alpha = cart2sph(samples[i,0], samples[i,1], samples[i,2])
-    rots[i,:,:] = Rz(alpha) @ Ry(beta) @ Rz(gamma[i])
-
-r2_max = 200
-r3_max = 60
-tol2 = 1e-10 
-tol3 = 1e-8
-SNR = 1
-std = get_estimated_std(vol, SNR)*0
-print(std)
-
-U2, U3, U2_fft, U3_fft, M1, M2, M3 = momentPCA_rNLA(vol, rots, r2_max, r3_max, tol2, tol3, ds_res, std)
-m1_emp, m2_emp, m3_emp = form_subspace_moments(vol, rots, U2_fft, U3_fft, std)
+    angles[i,0] = alpha 
+    angles[i,1] = beta 
+    angles[i,2] = gamma[i]
 
 
+# %% generate CTF 
+pixel_size = 1.04  # Pixel size of the images (in angstroms)
+voltage = 200  # Voltage (in KV)
+defocus_min = 1e4  # Minimum defocus value (in angstroms)
+defocus_max = 3e4  # Maximum defocus value (in angstroms)
+defocus_ct = 100 # the number of defocus groups
+Cs = 2.0  # Spherical aberration
+alpha = 0.1  # Amplitude contrast
 
-print(m1_emp.shape)
-print(m2_emp.shape)
-print(m3_emp.shape)
+# create CTF indices for each image, e.g. h_idx[0] returns the CTF index (0 to 99 if there are 100 CTFs) of the 0-th image
+h_idx = utils.create_ordered_filter_idx(N, defocus_ct)
+dtype = np.float32
 
+h_ctf = [
+    RadialCTFFilter(pixel_size, voltage, defocus=d, Cs=2.0, alpha=0.1)
+    for d in np.linspace(defocus_min, defocus_max, defocus_ct)
+]
+
+
+source_ctf_clean = Simulation(
+    L=img_size,
+    n=N,
+    vols=Vol,
+    offsets=0.0,
+    amplitudes=1.0,
+    unique_filters=h_ctf,
+    filter_indices=h_idx,
+    dtype=dtype,
+)
+
+#  determine noise variance to create noisy images with certain SNR
+sn_ratio = 10 
+noise_var = utils.get_noise_var_batch(source_ctf_clean, sn_ratio, batch_size)
+
+# %% create noise filter
+noise_adder = WhiteNoiseAdder(var=noise_var)
+
+
+source = Simulation(
+    L=img_size,
+    n=N,
+    vols=Vol,
+    unique_filters=h_ctf,
+    filter_indices=h_idx,
+    offsets=0.0,
+    amplitudes=1.0,
+    dtype=dtype,
+    noise_adder=noise_adder,
+)
+
+# %% moment PCA 
+
+params = {}
+params["r2_max"] = 200 
+params["r3_max"] = 100 
+params["tol2"] = 1e-10 
+params["tol3"] = 1e-8
+params["ds_res"] = ds_res
+params["eps"] = 1e-3 
+
+U2_fft, U3_fft, m1_emp, m2_emp, m3_emp = momentPCA_ctf_rNLA(source, params)
 
 savemat('noisyimage_test/MoMs.mat',{'m1_emp':m1_emp, 'm2_emp':m2_emp, 'm3_emp':m3_emp, 'U2_fft':U2_fft, 'U3_fft':U3_fft})
 
 
-# precomputation 
+
+# %% precomputation 
+
+
 subspaces = {}
 subspaces['m2'] = U2_fft 
 subspaces['m3'] = U3_fft 
@@ -123,9 +176,9 @@ A_constr[:,na:] = view_constr
 
 
 
+# %% reconstruction 
 
 
-# reconstruction 
 loss2 = 100000
 x20 = None 
 l1 = LA.norm(m1_emp.flatten())**2
@@ -160,7 +213,9 @@ a_est = x3[:na]
 vol_coef_est_m3 = sphFB_r_t_c @ a_est
 
 
-# save results
+# %% save results
+
+
 savemat('noisyimage_test/res2.mat',res2)
 savemat('noisyimage_test/res3.mat',res3)
 vol_est_m2 = coef_t_vol(vol_coef_est_m2, ell_max_vol, ds_res, k_max, r0, indices_vol)
@@ -179,7 +234,9 @@ with mrcfile.new('noisyimage_test/vol_est_m3.mrc', overwrite=True) as mrc:
     mrc.voxel_size = 1.0  
 
 
-# align volume
+# %% align volume
+
+
 Vol_ds = Volume(vol_ds)
 Vol2 = Volume(vol_est_m2)
 Vol3 = Volume(vol_est_m3)
@@ -203,6 +260,7 @@ with mrcfile.new('noisyimage_test/vol_est_m2_aligned.mrc', overwrite=True) as mr
 with mrcfile.new('noisyimage_test/vol_est_m3_aligned.mrc', overwrite=True) as mrc:
     mrc.set_data(vol3_aligned[0])  # Set the volume data
     mrc.voxel_size = 1.0  
+
 
 
 

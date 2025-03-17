@@ -1,22 +1,151 @@
 import numpy as np 
 import numpy.linalg as LA 
 import jax
-from jax import jit,vmap
+from jax import jit
 import jax.numpy as jnp
 from jax.numpy.linalg import norm
 from utils import * 
 from viewing_direction import * 
 from volume import * 
 import e3x
-import scipy 
 import math 
 import time 
-from scipy.optimize import minimize, BFGS
+from scipy.optimize import minimize
 from scipy.linalg import svd
 from aspire.volume import Volume 
 from aspire.utils import Rotation
+from fle_2d_single import FLEBasis2D
+from fast_cryo_pca import FastPCA
 
 
+
+def momentPCA_ctf_rNLA(source, params):
+    r2_max = params["r2_max"] 
+    r3_max = params["r3_max"] 
+    tol2 = params["tol2"] 
+    tol3 =  params["tol3"] 
+    ds_res =  params["ds_res"] 
+    eps = params["eps"] 
+    img_size = source.L
+    ds_res2 = ds_res**2
+    
+    N = source.clean_images.num_imgs
+    
+    np.random.seed(42)
+    G = np.random.normal(0,1,(ds_res2, r2_max))
+    G1 = np.random.normal(0,1,(ds_res2, r3_max))
+    G2 = np.random.normal(0,1,(ds_res2, r3_max))
+    
+    M1 = np.zeros((ds_res**2,1),dtype=np.complex128)
+    M2 = np.zeros((ds_res**2,r2_max),dtype=np.complex128)
+    M3 = np.zeros((ds_res**2,r3_max),dtype=np.complex128)
+    
+    # fast PCA 
+    fle = FLEBasis2D(img_size, img_size, eps=eps)
+    batch_size = 100
+    noise_var = source.noise_adder.noise_var
+    options = {
+        "whiten": False,
+        "single_pass": True, # whether estimate mean and covariance together (single pass over data), not separately
+        "noise_var": noise_var, # noise variance
+        "batch_size": batch_size,
+        "dtype": np.float32
+    }
+    fast_pca = FastPCA(source, fle, options)
+    
+    # estimate mean and covariance 
+    t1 = time.time()
+    print('estimate mean and covariance ...')
+    mean_est, covar_est = fast_pca.estimate_mean_covar()
+    t2 = time.time() 
+    print('spent '+str(t2-t1)+' seconds')
+    
+    # sketch the denoised moments 
+    
+    
+    defocus_ct = source.n_ctf_filters
+    for i in range(defocus_ct):
+        t1 = time.time()
+        print('sketching stream '+str(i+1)+' out of '+str(defocus_ct)+' streams')   
+        denoise_options = {
+            "denoise_df_id": [i], # denoise 0-th, 30-th, 60-th, 90-th defocus groups
+            "denoise_df_num": [int(N/defocus_ct)+1], # for each defocus group, respectively denoise the first 10, 15, 1, 100 images
+                                                # 240 exceed the number of images (100) per defocus group, so only 100 images will be returned
+            "return_denoise_error": True,
+            "store_images": True,
+        }
+        results = fast_pca.denoise_images(mean_est=mean_est, 
+                                          covar_est=covar_est, 
+                                          denoise_options=denoise_options)
+        images = results["denoised_images"]*img_size
+        images = image_downsample(images, ds_res, True)
+        
+        for image in images:
+            I = image.reshape(ds_res2, 1, order='F')
+            I_trans = I.T
+            M1 = M1 + I/N 
+            M2 = M2 + I @ (I_trans @ G)/N
+            M3 = M3 + I @ ((I_trans @ G1) * (I_trans @ G2))/N
+        
+        t2 = time.time() 
+        print('spent '+str(t2-t1)+' seconds')
+        
+        
+    U2, S2, _ = svd(M2, full_matrices=False)
+    r2 = np.argmax(np.cumsum(S2**2) / np.sum(S2**2) > (1 - tol2))+1
+    U2 = U2[:,0:r2]
+    U3, S3, _ = svd(M3, full_matrices=False)
+    r3 = np.argmax(np.cumsum(S3**2) / np.sum(S3**2) > (1 - tol3))+1
+    U3 = U3[:,0:r3]
+
+   
+    U2_fft = np.zeros(U2.shape, dtype=np.complex128)
+    for i in range(r2):
+        img = U2[:,i].reshape(ds_res, ds_res, order='F')
+        img_fft = centered_fft2(img)/ds_res 
+        U2_fft[:,i] = img_fft.flatten(order='F')
+        
+    U3_fft = np.zeros(U3.shape, dtype=np.complex128)
+    for i in range(r3):
+        img = U3[:,i].reshape(ds_res, ds_res, order='F')
+        img_fft = centered_fft2(img)/ds_res 
+        U3_fft[:,i] = img_fft.flatten(order='F')
+    
+    m1 = np.zeros((r2,1))
+    m2 = np.zeros((r2,r2))
+    m3 = np.zeros((r3,r3,r3))
+    
+    for i in range(defocus_ct):
+        t1 = time.time()
+        print('forming from stream '+str(i+1)+' out of '+str(defocus_ct)+' streams')
+        denoise_options = {
+            "denoise_df_id": [i], # denoise 0-th, 30-th, 60-th, 90-th defocus groups
+            "denoise_df_num": [int(N/defocus_ct)+1], # for each defocus group, respectively denoise the first 10, 15, 1, 100 images
+                                                # 240 exceed the number of images (100) per defocus group, so only 100 images will be returned
+            "return_denoise_error": True,
+            "store_images": True,
+        }
+        results = fast_pca.denoise_images(mean_est=mean_est, 
+                                          covar_est=covar_est, 
+                                          denoise_options=denoise_options)
+        images = results["denoised_images"]*img_size
+        images = image_downsample(images, ds_res, False)
+        
+        for image in images:
+            I = image.reshape(ds_res2, 1, order='F')
+            I2 = np.conj(U2_fft).T @ I 
+            I3 = np.conj(U3_fft).T @ I 
+            I3 = I3.flatten()
+            m1 = m1+I2/N
+            m2 = m2+(I2 @ np.conj(I2).T)/N
+            m3 = m3+np.einsum('i,j,k->ijk',I3,I3,I3)/N
+        
+        t2 = time.time() 
+        print('spent '+str(t2-t1)+' seconds')
+        
+    return U2_fft, U3_fft, m1, m2, m3
+    
+    
 
 
 def momentPCA_rNLA(vol, rots, r2_max, r3_max, tol2, tol3, ds_res, s):  
