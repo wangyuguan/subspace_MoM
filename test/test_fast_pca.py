@@ -37,8 +37,8 @@ from aspire.operators import RadialCTFFilter
 from aspire.noise import WhiteNoiseAdder
 import time 
 
-batch_size = 100
-num_imgs = 1000
+batch_size = 1000
+num_imgs = 10000
 
 
 eps = 1e-3
@@ -155,6 +155,8 @@ for i in range(defocus_ct):
     print(t2-t1)
     
     n += len(results["denoised_images"])
+
+print(n)
 
 # %% visualization 
 imgs_gt = results["clean_images"]
