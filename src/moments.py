@@ -16,7 +16,7 @@ from aspire.volume import Volume
 from aspire.utils import Rotation
 from fle_2d_single import FLEBasis2D
 from fast_cryo_pca import FastPCA
-
+from scipy.io import savemat 
 
 
 def momentPCA_ctf_rNLA(source, params):
@@ -53,6 +53,10 @@ def momentPCA_ctf_rNLA(source, params):
     }
     fast_pca = FastPCA(source, fle, options)
     
+    nbatch = 1000
+    nstream = math.ceil(N/nbatch)
+    
+    '''
     # estimate mean and covariance 
     t1 = time.time()
     print('estimate mean and covariance ...')
@@ -64,6 +68,7 @@ def momentPCA_ctf_rNLA(source, params):
     
     
     defocus_ct = source.n_ctf_filters
+    if_save = False
     for i in range(defocus_ct):
         t1 = time.time()
         print('sketching stream '+str(i+1)+' out of '+str(defocus_ct)+' streams')   
@@ -80,6 +85,10 @@ def momentPCA_ctf_rNLA(source, params):
         images = results["denoised_images"]*img_size
         images = image_downsample(images, ds_res, True)
         
+        if not if_save:
+            savemat('images.mat', {'clean':results["clean_images"], 'denoised':results["denoised_images"]})
+            if_save = True 
+        
         for image in images:
             I = image.reshape(ds_res2, 1, order='F')
             I_trans = I.T
@@ -89,7 +98,29 @@ def momentPCA_ctf_rNLA(source, params):
         
         t2 = time.time() 
         print('spent '+str(t2-t1)+' seconds')
+    '''
+    for i in range(nstream):
+        t1 = time.time()
+        # print('sketching stream '+str(i+1)+' out of '+str(nstream)+' streams')
+        # _rots = rots[(i*Nbat):min(((i+1)*Nbat),Ntot),:,:]     
+        # Rots = Rotation(_rots)
+        # images = Vol.project(Rots).downsample(ds_res=ds_res, zero_nyquist=False).asnumpy()
         
+        
+        # images = vol_proj(vol, _rots, s, i)
+        # images = Vol.project(Rotation(_rots)).asnumpy()*L
+        images = source.clean_images[(i*nbatch):min(((i+1)*nbatch),N)].asnumpy()*img_size
+        images = image_downsample(images, ds_res, True)
+        
+        for image in images:
+            I = image.reshape(ds_res2, 1, order='F')
+            I_trans = I.T
+            M1 = M1 + I/N
+            M2 = M2 + I @ (I_trans @ G)/N
+            M3 = M3 + I @ ((I_trans @ G1) * (I_trans @ G2))/N 
+        t2 = time.time() 
+        print('spent '+str(t2-t1)+' seconds')
+    
         
     U2, S2, _ = svd(M2, full_matrices=False)
     r2 = np.argmax(np.cumsum(S2**2) / np.sum(S2**2) > (1 - tol2))+1
@@ -114,7 +145,8 @@ def momentPCA_ctf_rNLA(source, params):
     m1 = np.zeros((r2,1))
     m2 = np.zeros((r2,r2))
     m3 = np.zeros((r3,r3,r3))
-    
+
+    '''
     for i in range(defocus_ct):
         t1 = time.time()
         print('forming from stream '+str(i+1)+' out of '+str(defocus_ct)+' streams')
@@ -140,6 +172,30 @@ def momentPCA_ctf_rNLA(source, params):
             m2 = m2+(I2 @ np.conj(I2).T)/N
             m3 = m3+np.einsum('i,j,k->ijk',I3,I3,I3)/N
         
+        t2 = time.time() 
+        print('spent '+str(t2-t1)+' seconds')
+    '''
+    for i in range(nstream):
+        t1 = time.time()
+        # print('forming from stream '+str(i+1)+' out of '+str(nstream)+' streams')
+        # _rots = rots[(i*Nbat):min((i+1)*Nbat,Ntot),:,:]     
+        # Rots = Rotation(_rots)
+        # imags = Vol.project(Rots).downsample(ds_res=ds_res, zero_nyquist=False).asnumpy()
+
+        # imags = vol_proj(vol, _rots, s, i)
+        # images = Vol.project(Rotation(_rots)).asnumpy()*L
+        images = source.clean_images[(i*nbatch):min(((i+1)*nbatch),N)].asnumpy()*img_size
+        images = image_downsample(images, ds_res, False)
+        
+        for image in images:
+            I = image.reshape(ds_res2, 1, order='F')
+            I2 = np.conj(U2_fft).T @ I 
+            I3 = np.conj(U3_fft).T @ I 
+            I3 = I3.flatten()
+            m1 = m1+I2/N
+            m2 = m2+(I2 @ np.conj(I2).T)/N
+            m3 = m3+np.einsum('i,j,k->ijk',I3,I3,I3)/N
+            
         t2 = time.time() 
         print('spent '+str(t2-t1)+' seconds')
         
