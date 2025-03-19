@@ -75,7 +75,7 @@ sim = Simulation(L=img_size,
 
 
 # visualize images with CTF effect 
-Images = sim.images[:]
+Images = sim.projections[:]
 images_ctf = Images.asnumpy()
 fig, axes = plt.subplots(2, 5, figsize=(15, 6))
 

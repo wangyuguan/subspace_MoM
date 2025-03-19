@@ -164,7 +164,6 @@ for i in range(defocus_ct):
     print('perform denoising ...')
     t1 = time.time()
     results = fast_pca.denoise_images(mean_est=mean_est, covar_est=covar_est, denoise_options=denoise_options)
-    print(int(num_imgs/defocus_ct)+1, results["denoised_images"].shape)
     t2 = time.time()
     print(t2-t1)
     

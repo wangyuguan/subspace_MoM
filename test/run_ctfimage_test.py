@@ -72,8 +72,8 @@ sph_coef, indices_view = sph_harm_transform(my_fun, ell_max_half_view)
 
 
 # %% generate angles 
-N = 5000
-batch_size = 100
+batch_size = 1000
+N = batch_size*5 
 angles = np.zeros((N,3),dtype=np.float32)
 
 print('sampling viewing directions')
@@ -92,12 +92,16 @@ pixel_size = 1.04  # Pixel size of the images (in angstroms)
 voltage = 200  # Voltage (in KV)
 defocus_min = 1e4  # Minimum defocus value (in angstroms)
 defocus_max = 3e4  # Maximum defocus value (in angstroms)
-defocus_ct = 100 # the number of defocus groups
+defocus_ct = int(N/batch_size) # the number of defocus groups
 Cs = 2.0  # Spherical aberration
 alpha = 0.1  # Amplitude contrast
 
 # create CTF indices for each image, e.g. h_idx[0] returns the CTF index (0 to 99 if there are 100 CTFs) of the 0-th image
-h_idx = utils.create_ordered_filter_idx(N, defocus_ct)
+# h_idx = utils.create_ordered_filter_idx(N, defocus_ct)
+h_idx = []
+for i in range(defocus_ct):
+    h_idx += [i]*batch_size
+
 dtype = np.float32
 
 h_ctf = [
@@ -146,6 +150,7 @@ params["tol2"] = 1e-10
 params["tol3"] = 1e-8
 params["ds_res"] = ds_res
 params["eps"] = 1e-3 
+params["batch_size"] = batch_size
 
 U2_fft, U3_fft, m1_emp, m2_emp, m3_emp = momentPCA_ctf_rNLA(source, params)
 

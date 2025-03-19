@@ -26,6 +26,7 @@ def momentPCA_ctf_rNLA(source, params):
     tol3 =  params["tol3"] 
     ds_res =  params["ds_res"] 
     eps = params["eps"] 
+    batch_size = params["batch_size"]
     img_size = source.L
     ds_res2 = ds_res**2
     
@@ -52,9 +53,8 @@ def momentPCA_ctf_rNLA(source, params):
         "dtype": np.float32
     }
     fast_pca = FastPCA(source, fle, options)
-    
-    nbatch = 1000
-    nstream = math.ceil(N/nbatch)
+    defocus_ct = int(N/batch_size)
+
     
     '''
     # estimate mean and covariance 
@@ -99,7 +99,7 @@ def momentPCA_ctf_rNLA(source, params):
         t2 = time.time() 
         print('spent '+str(t2-t1)+' seconds')
     '''
-    for i in range(nstream):
+    for i in range(defocus_ct):
         t1 = time.time()
         # print('sketching stream '+str(i+1)+' out of '+str(nstream)+' streams')
         # _rots = rots[(i*Nbat):min(((i+1)*Nbat),Ntot),:,:]     
@@ -109,7 +109,7 @@ def momentPCA_ctf_rNLA(source, params):
         
         # images = vol_proj(vol, _rots, s, i)
         # images = Vol.project(Rotation(_rots)).asnumpy()*L
-        images = source.clean_images[(i*nbatch):min(((i+1)*nbatch),N)].asnumpy()*img_size
+        images = source.clean_images[(i*batch_size):min(((i+1)*batch_size),N)].asnumpy()*img_size
         images = image_downsample(images, ds_res, True)
         
         for image in images:
@@ -175,7 +175,7 @@ def momentPCA_ctf_rNLA(source, params):
         t2 = time.time() 
         print('spent '+str(t2-t1)+' seconds')
     '''
-    for i in range(nstream):
+    for i in range(defocus_ct):
         t1 = time.time()
         # print('forming from stream '+str(i+1)+' out of '+str(nstream)+' streams')
         # _rots = rots[(i*Nbat):min((i+1)*Nbat,Ntot),:,:]     
@@ -184,7 +184,7 @@ def momentPCA_ctf_rNLA(source, params):
 
         # imags = vol_proj(vol, _rots, s, i)
         # images = Vol.project(Rotation(_rots)).asnumpy()*L
-        images = source.clean_images[(i*nbatch):min(((i+1)*nbatch),N)].asnumpy()*img_size
+        images = source.clean_images[(i*batch_size):min(((i+1)*batch_size),N)].asnumpy()*img_size
         images = image_downsample(images, ds_res, False)
         
         for image in images:
