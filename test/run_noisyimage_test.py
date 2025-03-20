@@ -15,6 +15,8 @@ sys.path.append(str(src_path))
 from aspire.volume import Volume
 from aspire.utils.rotation import Rotation
 from aspire.basis import FBBasis3D
+from aspire.operators import RadialCTFFilter
+from aspire.noise import WhiteNoiseAdder
 from utils import * 
 from viewing_direction import * 
 from moments import *

@@ -19,7 +19,9 @@ sys.path.append(str(src_path))
 src_path = Path('../../BOTalign').resolve()
 sys.path.append(str(src_path))
 
-
+from utils import * 
+from viewing_direction import * 
+from moments import *
 import utils_cwf_fast_batch as utils
 import matplotlib.pyplot as plt
 import mrcfile
@@ -47,10 +49,18 @@ eps = 1e-3
 # %% load volume data 
 with mrcfile.open('../data/emd_34948.map') as mrc:
     vol = mrc.data
-    vol = vol/np.max(vol)
 
 img_size = vol.shape[0]
-Vol = Volume(vol)
+L = vol.shape[0]
+ds_res = 64
+vol_ds = vol_downsample(vol, ds_res)
+ell_max_vol = 5
+vol_coef, k_max, r0, indices_vol = sphFB_transform(vol_ds, ell_max_vol)
+vol_ds = coef_t_vol(vol_coef, ell_max_vol, ds_res, k_max, r0, indices_vol)
+vol_ds = vol_ds.reshape(ds_res,ds_res,ds_res,order='F')
+vol = vol_upsample(vol_ds,L)
+vol = vol/LA.norm(vol.flatten())
+Vol = Volume(np.array(vol, dtype=np.float32))
 
 
 # %% Specify the CTF parameters
@@ -87,7 +97,7 @@ source_ctf_clean = Simulation(
 
 
 # determine noise variance to create noisy images with certain SNR
-sn_ratio = .1 
+sn_ratio = 10 
 noise_var = utils.get_noise_var_batch(source_ctf_clean, sn_ratio, batch_size)
 
 # create noise filter
@@ -106,6 +116,8 @@ source = Simulation(
     dtype=dtype,
     noise_adder=noise_adder,
 )
+
+
 
 
 # %% create fast PCA 
@@ -135,6 +147,7 @@ t2 = time.time()
 print(t2-t1)
 
 
+
 # %% denoise per defocus group 
 n = 0
 for i in range(defocus_ct):
@@ -155,6 +168,7 @@ for i in range(defocus_ct):
     print(t2-t1)
     
     n += len(results["denoised_images"])
+print(n)
 
 print(n)
 
