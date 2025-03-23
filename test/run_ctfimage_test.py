@@ -72,10 +72,11 @@ sph_coef, indices_view = sph_harm_transform(my_fun, ell_max_half_view)
 
 
 # %% generate angles 
-batch_size = 1000
-N = batch_size*5 
+batch_size = 100
+defocus_ct = 5 
+N = batch_size*defocus_ct
 angles = np.zeros((N,3),dtype=np.float32)
-
+rotations = np.zeros((N,3,3),dtype=np.float32)
 print('sampling viewing directions')
 samples = sample_sph_coef(N, sph_coef, ell_max_half_view)
 print('done')
@@ -85,6 +86,7 @@ for i in range(N):
     angles[i,0] = alpha 
     angles[i,1] = beta 
     angles[i,2] = gamma[i]
+    rotations[i,:,:] = Rz(alpha) @ Ry(beta) @ Rz(gamma[i])
 
 
 # %% generate CTF 
@@ -92,7 +94,6 @@ pixel_size = 1.04  # Pixel size of the images (in angstroms)
 voltage = 200  # Voltage (in KV)
 defocus_min = 1e4  # Minimum defocus value (in angstroms)
 defocus_max = 3e4  # Maximum defocus value (in angstroms)
-defocus_ct = int(N/batch_size) # the number of defocus groups
 Cs = 2.0  # Spherical aberration
 alpha = 0.1  # Amplitude contrast
 
@@ -140,134 +141,77 @@ source = Simulation(
     dtype=dtype,
     noise_adder=noise_adder,
 )
+source.rotations = rotations
 
-# %% moment PCA 
-
-params = {}
-params["r2_max"] = 200 
-params["r3_max"] = 100 
-params["tol2"] = 1e-10 
-params["tol3"] = 1e-8
-params["ds_res"] = ds_res
-params["eps"] = 1e-3 
-params["batch_size"] = batch_size
-
-U2_fft, U3_fft, m1_emp, m2_emp, m3_emp = momentPCA_ctf_rNLA(source, params)
-
-savemat('noisyimage_test/MoMs.mat',{'m1_emp':m1_emp, 'm2_emp':m2_emp, 'm3_emp':m3_emp, 'U2_fft':U2_fft, 'U3_fft':U3_fft})
-
-
-
-# %% precomputation 
+# %% fast PCA
+eps = 1e-3
+fle = FLEBasis2D(img_size, img_size, eps=eps)
+noise_var = source.noise_adder.noise_var
+options = {
+    "whiten": False,
+    "single_pass": True, # whether estimate mean and covariance together (single pass over data), not separately
+    "noise_var": noise_var, # noise variance
+    "batch_size": batch_size,
+    "dtype": np.float64
+}
+fast_pca = FastPCA(source, fle, options)
+defocus_ct = int(N/batch_size)
 
 
-subspaces = {}
-subspaces['m2'] = U2_fft 
-subspaces['m3'] = U3_fft 
-quadrature_rules = {} 
-quadrature_rules['m2'] = load_so3_quadrature(2*ell_max_vol, 2*ell_max_half_view)
-quadrature_rules['m3'] = load_so3_quadrature(3*ell_max_vol, 2*ell_max_half_view)
-k_max, r0, indices_vol = get_sphFB_indices(ds_res, ell_max_vol)
-sphFB_r_t_c, sphFB_c_t_r = get_sphFB_r_t_c_mat(ell_max_vol, k_max, indices_vol)
-sph_r_t_c , sph_c_t_r =  get_sph_r_t_c_mat(ell_max_half_view)
-grid = get_2d_unif_grid(ds_res,1/ds_res)
-grid = Grid_3d(xs=grid.xs, ys=grid.ys, zs=np.zeros(grid.ys.shape))
-Phi_precomps, Psi_precomps = precomputation(ell_max_vol, k_max, r0, indices_vol, ell_max_half_view, subspaces, quadrature_rules, grid)
-na = len(indices_vol)
-nb = len(indices_view)-1
-view_constr, rhs, _ = get_linear_ineqn_constraint(ell_max_half_view)
-A_constr = np.zeros([len(rhs), na+nb])
-A_constr[:,na:] = view_constr 
+print('estimate mean and covariance ...')
+mean_est, covar_est = fast_pca.estimate_mean_covar()
+
+# %% extracting clean images of different defocus group 
+
+i_batch = 1
+denoise_options = {
+    "denoise_df_id": [i_batch], 
+    "denoise_df_num": [batch_size],
+    "return_denoise_error": True,
+    "store_images": True,
+}
+results = fast_pca.denoise_images(mean_est=mean_est, 
+                                  covar_est=covar_est, 
+                                  denoise_options=denoise_options)
+images1 = np.array(results["clean_images"], dtype=np.float32)*img_size
+
+# images2 = fast_pca.src.projections[i_batch*batch_size:(i_batch+1)*batch_size].asnumpy()*img_size
+# err = LA.norm(images1.flatten()-images2.flatten())/LA.norm(images1.flatten())
+# print(err)
 
 
 
-# %% reconstruction 
+i_batch = 2
+denoise_options = {
+    "denoise_df_id": [i_batch], 
+    "denoise_df_num": [batch_size],
+    "return_denoise_error": True,
+    "store_images": True,
+}
+results = fast_pca.denoise_images(mean_est=mean_est, 
+                                  covar_est=covar_est, 
+                                  denoise_options=denoise_options)
+images2 = np.array(results["clean_images"], dtype=np.float32)*img_size
 
 
-loss2 = 100000
-x20 = None 
-l1 = LA.norm(m1_emp.flatten())**2
-l2 = LA.norm(m2_emp.flatten())**2
-l3 = LA.norm(m3_emp.flatten())**2
-for i in range(1):
-    a0 = 1e-6*np.random.normal(0,1,na)
-    centers = np.random.normal(0,1,size=(c,3))
-    centers /= LA.norm(centers, axis=1, keepdims=True)
-    w_vmf = np.random.uniform(0,1,c)
-    w_vmf = w_vmf/np.sum(w_vmf)
-    def my_fun(th,ph):
-        grid = Grid_3d(type='spherical', ths=np.array([th]),phs=np.array([ph]))
-        return 4*np.pi*vMF_density(centers,w_vmf,2,grid)[0]
-    sph_coef, _ = sph_harm_transform(my_fun, ell_max_half_view)
-    rot_coef = sph_t_rot_coef(sph_coef, ell_max_half_view)
-    rot_coef[0] = 1
-    b0 = sph_c_t_r @ rot_coef
-    b0 = jnp.real(b0[1:])
-    x0 = jnp.concatenate([a0,b0])
-    res2 = moment_LS(x0, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, A_constr, rhs, l1=l1,l2=l2,l3=0)
+# %% visualizing the two groups
 
-    if res2.fun<loss2:
-      x2 = res2.x
-      loss2 = res2.fun
-  
-a_est = x2[:na]
-vol_coef_est_m2 = sphFB_r_t_c @ a_est
-res3 = moment_LS(x2, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, A_constr, rhs)
-x3 = res3.x 
-a_est = x3[:na]
-vol_coef_est_m3 = sphFB_r_t_c @ a_est
+fig, axes = plt.subplots(2, 5, figsize=(15, 6))
+
+for i, ax in enumerate(axes.flatten()):
+    im = ax.imshow(images1[i], cmap='gray')
+plt.tight_layout()
+plt.show()
 
 
-# %% save results
 
 
-savemat('noisyimage_test/res2.mat',res2)
-savemat('noisyimage_test/res3.mat',res3)
-vol_est_m2 = coef_t_vol(vol_coef_est_m2, ell_max_vol, ds_res, k_max, r0, indices_vol)
-vol_est_m3 = coef_t_vol(vol_coef_est_m3, ell_max_vol, ds_res, k_max, r0, indices_vol)
+fig, axes = plt.subplots(2, 5, figsize=(15, 6))
 
-
-vol_est_m2 = vol_est_m2.reshape([ds_res,ds_res,ds_res])
-vol_est_m3 = vol_est_m3.reshape([ds_res,ds_res,ds_res])
-
-with mrcfile.new('noisyimage_test/vol_est_m2.mrc', overwrite=True) as mrc:
-    mrc.set_data(vol_est_m2.reshape([ds_res,ds_res,ds_res]))  # Set the volume data
-    mrc.voxel_size = 1.0  
-
-with mrcfile.new('noisyimage_test/vol_est_m3.mrc', overwrite=True) as mrc:
-    mrc.set_data(vol_est_m3.reshape([ds_res,ds_res,ds_res]))  # Set the volume data
-    mrc.voxel_size = 1.0  
-
-
-# %% align volume
-
-
-Vol_ds = Volume(vol_ds)
-Vol2 = Volume(vol_est_m2)
-Vol3 = Volume(vol_est_m3)
-
-para =['wemd',64,300,True] 
-[R02,R2]=align_BO(Vol_ds,Vol2,para,reflect=True) 
-[R03,R3]=align_BO(Vol_ds,Vol3,para,reflect=True) 
-
-vol_ds = Vol_ds.asnumpy()
-vol2_aligned = Vol2.rotate(Rotation(R2)).asnumpy()
-vol3_aligned = Vol3.rotate(Rotation(R3)).asnumpy()
-
-with mrcfile.new('noisyimage_test/vol_ds.mrc', overwrite=True) as mrc:
-    mrc.set_data(vol_ds[0])  # Set the volume data
-    mrc.voxel_size = 1.0  
-
-with mrcfile.new('noisyimage_test/vol_est_m2_aligned.mrc', overwrite=True) as mrc:
-    mrc.set_data(vol2_aligned[0])  # Set the volume data
-    mrc.voxel_size = 1.0  
-
-with mrcfile.new('noisyimage_test/vol_est_m3_aligned.mrc', overwrite=True) as mrc:
-    mrc.set_data(vol3_aligned[0])  # Set the volume data
-    mrc.voxel_size = 1.0  
-
-
-# %%
+for i, ax in enumerate(axes.flatten()):
+    im = ax.imshow(images2[i], cmap='gray')
+plt.tight_layout()
+plt.show()
 
 
 
