@@ -163,7 +163,7 @@ mean_est, covar_est = fast_pca.estimate_mean_covar()
 
 # %% extracting clean images of different defocus group 
 
-i_batch = 1
+i_batch = 0
 denoise_options = {
     "denoise_df_id": [i_batch], 
     "denoise_df_num": [batch_size],
@@ -175,13 +175,9 @@ results = fast_pca.denoise_images(mean_est=mean_est,
                                   denoise_options=denoise_options)
 images1 = np.array(results["clean_images"], dtype=np.float32)*img_size
 
-# images2 = fast_pca.src.projections[i_batch*batch_size:(i_batch+1)*batch_size].asnumpy()*img_size
-# err = LA.norm(images1.flatten()-images2.flatten())/LA.norm(images1.flatten())
-# print(err)
 
 
-
-i_batch = 2
+i_batch = 1
 denoise_options = {
     "denoise_df_id": [i_batch], 
     "denoise_df_num": [batch_size],
@@ -192,6 +188,12 @@ results = fast_pca.denoise_images(mean_est=mean_est,
                                   covar_est=covar_est, 
                                   denoise_options=denoise_options)
 images2 = np.array(results["clean_images"], dtype=np.float32)*img_size
+
+
+
+# images2 = fast_pca.src.projections[i_batch*batch_size:(i_batch+1)*batch_size].asnumpy()*img_size
+# err = LA.norm(images1.flatten()-images2.flatten())/LA.norm(images1.flatten())
+# print(err)
 
 
 # %% visualizing the two groups
