@@ -27,6 +27,7 @@ def momentPCA_ctf_rNLA(source, params):
     ds_res =  params["ds_res"] 
     eps = params["eps"] 
     batch_size = params["batch_size"]
+    use_denoise = params["use_denoise"]
     img_size = source.L
     ds_res2 = ds_res**2
     
@@ -43,7 +44,6 @@ def momentPCA_ctf_rNLA(source, params):
     
     # fast PCA 
     fle = FLEBasis2D(img_size, img_size, eps=eps)
-    batch_size = 100
     noise_var = source.noise_adder.noise_var
     options = {
         "whiten": False,
@@ -53,41 +53,42 @@ def momentPCA_ctf_rNLA(source, params):
         "dtype": np.float32
     }
     fast_pca = FastPCA(source, fle, options)
-    defocus_ct = int(N/batch_size)
+    defocus_ct = source.n_ctf_filters
 
     
-    '''
+
     # estimate mean and covariance 
-    t1 = time.time()
-    print('estimate mean and covariance ...')
-    mean_est, covar_est = fast_pca.estimate_mean_covar()
-    t2 = time.time() 
-    print('spent '+str(t2-t1)+' seconds')
-    
+    if use_denoise:
+        t1 = time.time()
+        print('estimate mean and covariance ...')
+        mean_est, covar_est = fast_pca.estimate_mean_covar()
+        t2 = time.time() 
+        print('spent '+str(t2-t1)+' seconds')
+        
     # sketch the denoised moments 
     
     
-    defocus_ct = source.n_ctf_filters
-    if_save = False
     for i in range(defocus_ct):
         t1 = time.time()
         print('sketching stream '+str(i+1)+' out of '+str(defocus_ct)+' streams')   
         denoise_options = {
-            "denoise_df_id": [i], # denoise 0-th, 30-th, 60-th, 90-th defocus groups
-            "denoise_df_num": [int(N/defocus_ct)+1], # for each defocus group, respectively denoise the first 10, 15, 1, 100 images
-                                                # 240 exceed the number of images (100) per defocus group, so only 100 images will be returned
+            "denoise_df_id": [i], 
+            "denoise_df_num": [batch_size],                             
             "return_denoise_error": True,
             "store_images": True,
         }
-        results = fast_pca.denoise_images(mean_est=mean_est, 
-                                          covar_est=covar_est, 
-                                          denoise_options=denoise_options)
-        images = results["denoised_images"]*img_size
+
+        if use_denoise:
+            results = fast_pca.denoise_images(mean_est=mean_est, 
+                                              covar_est=covar_est, 
+                                              denoise_options=denoise_options)
+            images = results["denoised_images"]*img_size
+        else:
+            indices = np.arange(i*batch_size, min(((i+1)*batch_size),N))
+            images = source.projections[indices].shift(source.sim_offsets[indices, :])
+            images = images.asnumpy()*img_size
         images = image_downsample(images, ds_res, True)
-        
-        if not if_save:
-            savemat('images.mat', {'clean':results["clean_images"], 'denoised':results["denoised_images"]})
-            if_save = True 
+
         
         for image in images:
             I = image.reshape(ds_res2, 1, order='F')
@@ -98,30 +99,8 @@ def momentPCA_ctf_rNLA(source, params):
         
         t2 = time.time() 
         print('spent '+str(t2-t1)+' seconds')
-    '''
-    for i in range(defocus_ct):
-        t1 = time.time()
-        # print('sketching stream '+str(i+1)+' out of '+str(nstream)+' streams')
-        # _rots = rots[(i*Nbat):min(((i+1)*Nbat),Ntot),:,:]     
-        # Rots = Rotation(_rots)
-        # images = Vol.project(Rots).downsample(ds_res=ds_res, zero_nyquist=False).asnumpy()
-        
-        
-        # images = vol_proj(vol, _rots, s, i)
-        # images = Vol.project(Rotation(_rots)).asnumpy()*L
-        images = source.clean_images[(i*batch_size):min(((i+1)*batch_size),N)].asnumpy()*img_size
-        images = image_downsample(images, ds_res, True)
-        
-        for image in images:
-            I = image.reshape(ds_res2, 1, order='F')
-            I_trans = I.T
-            M1 = M1 + I/N
-            M2 = M2 + I @ (I_trans @ G)/N
-            M3 = M3 + I @ ((I_trans @ G1) * (I_trans @ G2))/N 
-        t2 = time.time() 
-        print('spent '+str(t2-t1)+' seconds')
-    
-        
+
+
     U2, S2, _ = svd(M2, full_matrices=False)
     r2 = np.argmax(np.cumsum(S2**2) / np.sum(S2**2) > (1 - tol2))+1
     U2 = U2[:,0:r2]
@@ -146,21 +125,25 @@ def momentPCA_ctf_rNLA(source, params):
     m2 = np.zeros((r2,r2))
     m3 = np.zeros((r3,r3,r3))
 
-    '''
+
     for i in range(defocus_ct):
         t1 = time.time()
         print('forming from stream '+str(i+1)+' out of '+str(defocus_ct)+' streams')
         denoise_options = {
-            "denoise_df_id": [i], # denoise 0-th, 30-th, 60-th, 90-th defocus groups
-            "denoise_df_num": [int(N/defocus_ct)+1], # for each defocus group, respectively denoise the first 10, 15, 1, 100 images
-                                                # 240 exceed the number of images (100) per defocus group, so only 100 images will be returned
+            "denoise_df_id": [i], 
+            "denoise_df_num": [batch_size],                                    
             "return_denoise_error": True,
             "store_images": True,
         }
-        results = fast_pca.denoise_images(mean_est=mean_est, 
-                                          covar_est=covar_est, 
-                                          denoise_options=denoise_options)
-        images = results["denoised_images"]*img_size
+        if use_denoise:
+            results = fast_pca.denoise_images(mean_est=mean_est, 
+                                              covar_est=covar_est, 
+                                              denoise_options=denoise_options)
+            images = results["denoised_images"]*img_size
+        else:
+            indices = np.arange(i*batch_size, min(((i+1)*batch_size),N))
+            images = source.projections[indices].shift(source.sim_offsets[indices, :])
+            images = images.asnumpy()*img_size
         images = image_downsample(images, ds_res, False)
         
         for image in images:
@@ -174,31 +157,7 @@ def momentPCA_ctf_rNLA(source, params):
         
         t2 = time.time() 
         print('spent '+str(t2-t1)+' seconds')
-    '''
-    for i in range(defocus_ct):
-        t1 = time.time()
-        # print('forming from stream '+str(i+1)+' out of '+str(nstream)+' streams')
-        # _rots = rots[(i*Nbat):min((i+1)*Nbat,Ntot),:,:]     
-        # Rots = Rotation(_rots)
-        # imags = Vol.project(Rots).downsample(ds_res=ds_res, zero_nyquist=False).asnumpy()
 
-        # imags = vol_proj(vol, _rots, s, i)
-        # images = Vol.project(Rotation(_rots)).asnumpy()*L
-        images = source.clean_images[(i*batch_size):min(((i+1)*batch_size),N)].asnumpy()*img_size
-        images = image_downsample(images, ds_res, False)
-        
-        for image in images:
-            I = image.reshape(ds_res2, 1, order='F')
-            I2 = np.conj(U2_fft).T @ I 
-            I3 = np.conj(U3_fft).T @ I 
-            I3 = I3.flatten()
-            m1 = m1+I2/N
-            m2 = m2+(I2 @ np.conj(I2).T)/N
-            m3 = m3+np.einsum('i,j,k->ijk',I3,I3,I3)/N
-            
-        t2 = time.time() 
-        print('spent '+str(t2-t1)+' seconds')
-        
     return U2_fft, U3_fft, m1, m2, m3
     
     

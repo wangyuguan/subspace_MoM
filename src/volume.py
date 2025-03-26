@@ -5,7 +5,8 @@ from aspire.basis.basis_utils import all_besselj_zeros
 from scipy.special import spherical_jn
 from utils import *
 import pymanopt
-
+import matplotlib.pyplot as plt
+from scipy.interpolate import PchipInterpolator
 
 
 def get_sphFB_indices(n,ell_max):
@@ -410,5 +411,102 @@ def calc_k_max(ell_max,nres,ndim):
 
     return k_max, r0
 
+def FSCorr(m1, m2):
+    # Assume m1 and m2 are 3D numpy arrays of shape (n, n, n)
+    n, n1, n2 = m1.shape
+
+    # Define the origin
+    ctr = (n + 1) / 2
+    origin = np.array([ctr, ctr, ctr])
+
+    # Create a 3D grid and compute radius matrix R
+    x, y, z = np.meshgrid(
+        np.arange(1, n+1) - origin[0],
+        np.arange(1, n+1) - origin[1],
+        np.arange(1, n+1) - origin[2],
+        indexing='ij'
+    )
+    R = np.sqrt(x**2 + y**2 + z**2)
+    eps = 1e-4
+
+    # Fourier-transform the maps
+    f1 = np.fft.fftshift(np.fft.fftn(m1))
+    f2 = np.fft.fftshift(np.fft.fftn(m2))
+
+    # Initialize correlation array
+    c = np.zeros(n // 2)
+
+    # Initial shell
+    d0 = R < 0.5 + eps
+
+    for i in range(n // 2):
+        d1 = R < 0.5 + i + 1 + eps
+        ring = np.logical_and(d1, np.logical_not(d0))
+
+        r1 = ring * f1
+        r2 = ring * f2
+
+        num = np.real(np.sum(r1 * np.conj(r2)))
+        den = np.sqrt(np.sum(np.abs(r1)**2) * np.sum(np.abs(r2)**2))
+
+        c[i] = num / den if den != 0 else 0
+        d0 = d1
+
+    return c
 
 
+def fscres(fsc, cutoff):
+    n = len(fsc)
+    r = n
+    x = np.arange(1, n + 1)
+    xx = np.arange(1, n, 0.01)
+
+    # Use PCHIP interpolation (monotonic, shape-preserving)
+    interp = PchipInterpolator(x, fsc)
+    y = interp(xx)
+
+    # Find the first index where FSC drops below cutoff
+    below_cutoff = np.where(y < cutoff)[0]
+    if below_cutoff.size > 0:
+        r = xx[below_cutoff[0]]
+
+    return r
+
+
+
+def get_fsc(V1, V2, pixelsize):
+
+    fsc = FSCorr(V1, V2) 
+    fsc[0] = 1
+    n = len(fsc)
+
+    # Plot FSC
+    plt.figure()
+    plt.plot(range(1, n+1), fsc, 'r-*', linewidth=2)
+    plt.xlim([1, n])
+    plt.ylim([-0.1, 1.05])
+    plt.grid(True)
+
+    # Plot 0.5 reference line
+    plt.plot(range(1, n+1), [0.5]*n, 'k--', linewidth=1.5)
+
+    # Resolution estimate
+    j = fscres(fsc, 0.5)  
+
+    res = 2 * pixelsize * n / j
+
+    # Update x-ticks with frequency labels
+    df = 1 / (2 * pixelsize * n)
+    xticks = plt.xticks()[0]
+    xtick_labels = [f"{x*df:.3f}" for x in xticks]
+    plt.xticks(xticks, xtick_labels)
+
+    # Axis labels and legend
+#    plt.xlabel(r'$1/\mathrm{\AA}$', fontsize=20)
+#    plt.tick_params(labelsize=20)
+#    plt.legend([fr'{res:.2f} $\mathrm{{\AA}}$'], loc='best', fontsize=20)
+
+    plt.tight_layout()
+    plt.show()
+
+    return res
