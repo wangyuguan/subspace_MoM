@@ -6,7 +6,7 @@ This repository contains the complementary software for the paper:
 
 The reproducible code for the results in the paper is provided in the `examples/` folder.
 
-**Authors:** Jeremy Hoskins, Yuehaw Khoo, Oscar Mickelin, Amit Singer, and Yuguan Wang  
+**Paper authors:** Jeremy Hoskins, Yuehaw Khoo, Oscar Mickelin, Amit Singer, and Yuguan Wang  
 **Version:** 2.0  
 **Release Date:** June 30, 2025  
 **Language:** Python 3.13.2
