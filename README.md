@@ -11,7 +11,6 @@ The reproducible code for the results in the paper is provided in the `examples/
 **Release Date:** June 30, 2025  
 **Language:** Python
 
----
 
 ## Third-Party Packages, Code, and Data
 
