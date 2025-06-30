@@ -73,7 +73,7 @@ def run_subspace_MoM(vol_path, snr, batch_size, defocus_ct, out_file_name=None):
 
     # set up ctfs 
     pixel_size = 1.04  # Pixel size of the images (in angstroms)
-    voltage = 200  # Voltage (in KV)
+    voltage = 300  # Voltage (in KV)
     Cs = 2.0  # Spherical aberration
     alpha = 0.1  # Amplitude contrast
 
@@ -244,7 +244,7 @@ def generate_particles(vol_path, snr, batch_size, defocus_ct):
 
     # set up ctfs 
     pixel_size = 1.04  # Pixel size of the images (in angstroms)
-    voltage = 200  # Voltage (in KV)
+    voltage = 300  # Voltage (in KV)
     Cs = 2.0  # Spherical aberration
     alpha = 0.1  # Amplitude contrast
 
@@ -422,7 +422,7 @@ def generate_example_images(vol_path, snr, batch_size, defocus_ct, fname):
 
     # set up ctfs 
     pixel_size = 1.04  # Pixel size of the images (in angstroms)
-    voltage = 200  # Voltage (in KV)
+    voltage = 300  # Voltage (in KV)
     Cs = 2.0  # Spherical aberration
     alpha = 0.1  # Amplitude contrast
 
