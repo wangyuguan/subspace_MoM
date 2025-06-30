@@ -35,7 +35,7 @@ To generate a particle stack compatible with RELION:
    ```python
    generate_particles(vol_path, snr, batch_size, defocus_ct)
 3. Run the script. This will:
-	•	Create a .star file for input into RELION.
-	•	Generate a folder named particles/ containing the individual particle images.
+   - Create a `.star` file that can be used as input for RELION.
+   - Generate a folder named `particles/` containing the individual particle images.
 
 Make sure to configure the parameters such as vol_path, snr, and defocus_ct according to your dataset and desired settings.
