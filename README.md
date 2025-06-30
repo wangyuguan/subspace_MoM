@@ -1,23 +1,24 @@
 # Subspace Method of Moments for Cryo-EM
 
-A Complementary software for the paper: "Subspace Method of Moments for Ab Initio 3-D Single-particle Cryo-EM Reconstruction”. [https://arxiv.org/abs/2410.06889]
+This repository contains the complementary software for the paper:  
+**"Subspace Method of Moments for Ab Initio 3-D Single-Particle Cryo-EM Reconstruction"**  
+[arXiv:2410.06889](https://arxiv.org/abs/2410.06889)
 
-Paper authors: Jeremy Hoskins, Yuehaw Khoo, Oscar Mickelin, Amit Singer and Yuguan Wang.
+The reproducible code for the results in the paper is provided in the `examples/` folder.
 
-Version: 2.0.
+**Authors:** Jeremy Hoskins, Yuehaw Khoo, Oscar Mickelin, Amit Singer, and Yuguan Wang  
+**Version:** 2.0  
+**Release Date:** June 30, 2025  
+**Language:** Python
 
-Release date: 30 Jun 2025.
+---
 
-Python code.
+## Third-Party Packages, Code, and Data
 
+This package makes use of the following third-party software:
 
-### 3rd party package, code and data:
-This package uses the following softwares produced by 3rd parties:
-1.	ASPIRE package, see https://github.com/PrincetonUniversity/aspire. 
-2.	Manopt, see https://www.manopt.org.
-3.	FINUFFT, see https://finufft.readthedocs.io/en/latest/.
-   
-
-
-
+1. [ASPIRE](https://github.com/PrincetonUniversity/aspire) — Python toolbox for Cryo-EM image analysis.
+2. [BOTalign](https://github.com/RuiyiYang/BOTalign) — Software for alignment of Cryo-EM volumes.
+3. [Manopt](https://www.manopt.org) — MATLAB toolbox for optimization on manifolds.
+4. [FINUFFT](https://finufft.readthedocs.io/en/latest/) — Fast nonuniform FFT library.
 
