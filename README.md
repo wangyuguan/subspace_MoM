@@ -18,6 +18,6 @@ This package makes use of the following third-party software:
 
 1. [ASPIRE](https://github.com/PrincetonUniversity/aspire) — Python toolbox for Cryo-EM image analysis.
 2. [BOTalign](https://github.com/RuiyiYang/BOTalign) — Software for alignment of Cryo-EM volumes.
-3. [Manopt](https://www.manopt.org) — MATLAB toolbox for optimization on manifolds.
+3. [Pymanopt](https://pymanopt.org/) — Python package for optimization on manifolds.
 4. [FINUFFT](https://finufft.readthedocs.io/en/latest/) — Fast nonuniform FFT library.
 
