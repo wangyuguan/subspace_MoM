@@ -24,7 +24,7 @@ This package makes use of the following third-party software:
 This package makes use of the following third-party data:
 
 1. [Electron Microscopy Data Bank (EMDB)](https://www.ebi.ac.uk/emdb/) - A public repository of 3-D EM maps.
-2. [Quadrature Rules on Manifolds](https://www-user.tu-chemnitz.de/~potts/workgroup/graef/quadrature/index.php.en) - High order quadrature on the unit sphere and 3-D rotation group.
+2. [Quadrature Rules on Manifolds](https://www-user.tu-chemnitz.de/~potts/workgroup/graef/quadrature/index.php.en) - A repository containing high order quadrature relus on the unit sphere and 3-D rotation group.
 
 ## Usage
 
