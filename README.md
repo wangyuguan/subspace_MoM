@@ -1,4 +1,4 @@
-# Subspace Method of Moments for Cryo-EM
+# Subspace method of moments for cryo-EM reconstruction
 
 This repository contains the complementary software for the paper:  
 **"Subspace Method of Moments for Ab Initio 3-D Single-Particle Cryo-EM Reconstruction"**  
