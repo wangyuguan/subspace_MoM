@@ -23,4 +23,5 @@ This package makes use of the following third-party software:
 
 This package makes use of the following third-party data:
 
-1. [Electron Microscopy Data Bank (EMDB)](https://www.ebi.ac.uk/emdb/) A public repository of 3D EM maps.
+1. [Electron Microscopy Data Bank (EMDB)](https://www.ebi.ac.uk/emdb/) - A public repository of 3D EM maps.
+2. [Quadratures][https://www-user.tu-chemnitz.de/~potts/workgroup/graef/quadrature/index.php.en] - Higher order quandrature on the unit sphere and $SO(3)$. 
