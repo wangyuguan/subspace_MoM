@@ -1,6 +1,6 @@
 # Subspace Method of Moments for Cryo-EM
 
-A Complementary software for the paper: "Subspace Method of Moments for Ab Initio 3-D Single-particle Cryo-EM Reconstruction”. [https://arxiv.org/abs/2410.06889][https://arxiv.org/abs/2410.06889]
+A Complementary software for the paper: "Subspace Method of Moments for Ab Initio 3-D Single-particle Cryo-EM Reconstruction”. [https://arxiv.org/abs/2410.06889]
 
 Paper authors: Jeremy Hoskins, Yuehaw Khoo, Oscar Mickelin, Amit Singer and Yuguan Wang.
 
