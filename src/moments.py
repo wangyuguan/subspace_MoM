@@ -3,7 +3,6 @@ import numpy.linalg as LA
 import jax
 from jax import jit
 import jax.numpy as jnp
-from jax.numpy.linalg import norm
 from utils import * 
 from viewing_direction import * 
 from volume import * 
@@ -14,411 +13,688 @@ from scipy.optimize import minimize
 from scipy.linalg import svd
 from aspire.volume import Volume 
 from aspire.utils import Rotation
-from fle_2d_single import FLEBasis2D
-from fast_cryo_pca import FastPCA
+from aspire.numeric import fft
+from aspire.source.simulation import Simulation
+from aspire.noise import WhiteNoiseAdder
+# from fle_2d_single import FLEBasis2D
+# from fast_cryo_pca import FastPCA
 from scipy.io import savemat 
+from tqdm import tqdm 
+from tqdm import trange
+import random 
 
 
-def momentPCA_ctf_rNLA(source, params):
-    r2_max = params["r2_max"] 
-    r3_max = params["r3_max"] 
-    tol2 = params["tol2"] 
-    tol3 =  params["tol3"] 
-    ds_res =  params["ds_res"] 
-    eps = params["eps"] 
-    batch_size = params["batch_size"]
-    use_denoise = params["use_denoise"]
-    img_size = source.L
-    ds_res2 = ds_res**2
+def sequential_moment_matching(m1_emp,m2_emp,m3_emp,U2,U3,ds_res,ell_max_vol,ell_max_half_view,L2=None,L3=None):
+    subspaces = {}
+    subspaces['m2'] = U2 
+    subspaces['m3'] = U3 
     
-    N = source.clean_images.num_imgs
+    quadrature_rules = {} 
+    if L2 is None:
+        L2 = 2*ell_max_vol
+    if L3 is None:
+        L3 = 3*ell_max_vol
+    quadrature_rules['m2'] = load_so3_quadrature(L2, 2*ell_max_half_view)
+    quadrature_rules['m3'] = load_so3_quadrature(L3, 2*ell_max_half_view)
     
+    grid = get_2d_unif_grid(ds_res,1/ds_res)
+    grid = Grid_3d(xs=grid.xs, ys=grid.ys, zs=np.zeros(grid.ys.shape))
+
+    k_max, r0 = calc_k_max(ell_max_vol,ds_res,3)
+    indices_vol = {}
+    i = 0 
+    for ell in range(ell_max_vol+1):
+        for k in range(k_max[ell]):
+            for m in range(-ell,ell+1):
+                indices_vol[(ell,k,m)] = i
+                i += 1 
+
+    ell_max_view = 2*ell_max_half_view
+    i = 0 
+    indices_view = {}
+    for ell in np.arange(ell_max_view+1):
+        if ell % 2 == 0:
+          for m in range(-ell, ell+1):
+              indices_view[(ell,m)] = i
+              i += 1
+
+
+    print('precomputation')
+    t_precomp = time.time()
+    Phi_precomps, Psi_precomps = precomputation(ell_max_vol, k_max, r0, indices_vol, ell_max_half_view, subspaces, quadrature_rules, grid)
+    
+    
+    na = len(indices_vol)
+    nb = len(indices_view)-1
+    view_constr, rhs, _ = get_linear_ineqn_constraint(ell_max_half_view)
+    A_constr = np.zeros([len(rhs), na+nb])
+    A_constr[:,na:] = view_constr 
+    t_precomp = time.time() - t_precomp
+
+
+    sphFB_r_t_c, sphFB_c_t_r = get_sphFB_r_t_c_mat(ell_max_vol, k_max, indices_vol)
+    sph_r_t_c , sph_c_t_r =  get_sph_r_t_c_mat(ell_max_half_view)
+
+    
+    l1 = LA.norm(m1_emp.flatten())**2
+    l2 = LA.norm(m2_emp.flatten())**2
+    l3 = LA.norm(m3_emp.flatten())**2
+
+    nc = 10
     np.random.seed(42)
-    G = np.random.normal(0,1,(ds_res2, r2_max))
-    G1 = np.random.normal(0,1,(ds_res2, r3_max))
-    G2 = np.random.normal(0,1,(ds_res2, r3_max))
-    
-    M1 = np.zeros((ds_res**2,1),dtype=np.complex128)
-    M2 = np.zeros((ds_res**2,r2_max),dtype=np.complex128)
-    M3 = np.zeros((ds_res**2,r3_max),dtype=np.complex128)
-    
-    # fast PCA 
-    fle = FLEBasis2D(img_size, img_size, eps=eps)
-    noise_var = source.noise_adder.noise_var
-    options = {
-        "whiten": False,
-        "single_pass": True, # whether estimate mean and covariance together (single pass over data), not separately
-        "noise_var": noise_var, # noise variance
-        "batch_size": batch_size,
-        "dtype": np.float32
-    }
-    fast_pca = FastPCA(source, fle, options)
-    defocus_ct = source.n_ctf_filters
+    a0 = 1e-6*np.random.normal(0,1,na)
+    centers = np.random.normal(0,1,size=(nc,3))
+    centers /= LA.norm(centers, axis=1, keepdims=True)
+    w_vmf = np.random.uniform(0,1,nc)
+    w_vmf = w_vmf/np.sum(w_vmf)
+    def my_fun(th,ph):
+        grid = Grid_3d(type='spherical', ths=np.array([th]),phs=np.array([ph]))
+        return 4*np.pi*vMF_density(centers,w_vmf,2,grid)[0]
+    sph_coef, _ = sph_harm_transform(my_fun, ell_max_half_view)
+    rot_coef = sph_t_rot_coef(sph_coef, ell_max_half_view)
+    rot_coef[0] = 1
+    b0 = sph_c_t_r @ rot_coef
+    b0 = jnp.real(b0[1:])
+    x0 = jnp.concatenate([a0,b0])
 
-    
+    # fit m1 
+    t_m1 = time.time()
+    res1 = moment_LS(x0, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, A_constr, rhs, l1=l1,l2=0,l3=0)
+    x1 = res1.x
+    a_est = x1[:na]
+    vol_coef_est_m1 = sphFB_r_t_c @ a_est
+    t_m1  = time.time()-t_m1
 
-    # estimate mean and covariance 
-    if use_denoise:
+    # fit m1 and m2 
+    t_m2 = time.time()
+    res2 = moment_LS(x1, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, A_constr, rhs, l1=l1,l2=l2,l3=0)
+    x2 = res2.x
+    t_m2  = time.time()-t_m2
+    a_est = x2[:na]
+    vol_coef_est_m2 = sphFB_r_t_c @ a_est
+
+    # fit m1, m2 and m3
+    t_m3 = time.time()
+    res3 = moment_LS(x2, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, A_constr, rhs)
+    t_m3 = time.time()-t_m3 
+    x3 = res3.x 
+    a_est = x3[:na]
+    b_est = x3[na:]
+    vol_coef_est_m3 = sphFB_r_t_c @ a_est
+
+    res = {}
+    res['a_est'] = a_est 
+    res['b_est'] = b_est 
+    res['vol_coef_est_m1'] = vol_coef_est_m1
+    res['vol_coef_est_m2'] = vol_coef_est_m2
+    res['vol_coef_est_m3'] = vol_coef_est_m3
+    res['t_precomp'] = t_precomp 
+    res['x1'] = x1
+    res['x2'] = x2
+    res['x3'] = x3
+    res['t_m1'] = t_m1
+    res['t_m2'] = t_m2
+    res['t_m3'] = t_m3
+
+    return res 
+
+def ctf_image_subspace_moments_CUR(vol, rotmats, h_ctfs, opts):
+    tol2 = opts['tol2'] 
+    tol3 = opts['tol3'] 
+    nI2 = opts['nI2'] 
+    nI3 = opts['nI3']
+    nJ = opts['nJ']
+    r2_max = opts['r2_max']
+    r3_max = opts['r3_max'] 
+    ds_res = opts['ds_res'] 
+    defocus_ct = opts['defocus_ct'] 
+    batch_size = opts['batch_size'] 
+    var = opts['var'] 
+    img_size = vol.shape[0]
+    # plan = plan_vol_ds_proj_ft(img_size)
+    img_size2 = img_size**2 
+    num_img = rotmats.shape[0]
+    ds_res2 = ds_res**2 
+    ind = get_subindices(img_size, ds_res)
+    I = jnp.array(sample_idxs(img_size,ds_res,60))
+    I2 = jnp.array(sample_idxs(img_size,ds_res,nI2))
+    I3 = jnp.array(sample_idxs(img_size,ds_res,nI3))
+    J1 = jnp.array(sample_idxs(img_size,ds_res,nJ))
+    J2 = jnp.array(sample_idxs(img_size,ds_res,nJ))
+    M1_ctf = 0 
+    M2_ctf_I2 = 0 
+    # M2_ctf = 0
+    M3_ctf_I3 = 0 
+    M3_ctf_J = 0 
+    M2_ctf_I = 0 
+    M3_ctf_I = 0 
+    mask_M1 = 0 
+    mask_I2 = 0 
+    # mask_M2 = 0 
+    mask_I3 = 0 
+    mask_J = 0 
+    mask_II = 0 
+    mask_III = 0
+    t_form = 0 
+    for i in trange(defocus_ct):
+        np.random.seed(i)
+        _rotmats = rotmats[(i*batch_size):(i+1)*batch_size,:,:]    
+        H_full =  h_ctfs[i].evaluate_grid(img_size)
+        projs = vol_proj(vol, _rotmats)
+        imgs = fft.centered_ifft2(fft.centered_fft2(projs)*H_full).real
+        H = H_full.flatten(order='F')[ind]
+        H2 = H**2
+        imgs_fft = fft.centered_fft2(projs)
+        if var>0:
+            noise = np.sqrt(var)*np.random.normal(0,1,(batch_size,img_size,img_size))
+            imgs = imgs+noise 
         t1 = time.time()
-        print('estimate mean and covariance ...')
-        mean_est, covar_est = fast_pca.estimate_mean_covar()
-        t2 = time.time() 
-        print('spent '+str(t2-t1)+' seconds')
+        imgs_fft = image_downsample(imgs, ds_res, False, False)
+        imgs_fft = jnp.array(imgs_fft.reshape((batch_size, ds_res2), order='F')*H[None,:], dtype=jnp.complex64)
+        imgs_fft_I = imgs_fft[:,I]
+        imgs_fft_I2 = imgs_fft[:,I2]
+        imgs_fft_I3 = imgs_fft[:,I3]
+        imgs_fft_J1 = imgs_fft[:,J1]
+        imgs_fft_J2 = imgs_fft[:,J2]
         
-    # sketch the denoised moments 
-    
-    
-    for i in range(defocus_ct):
-        t1 = time.time()
-        print('sketching stream '+str(i+1)+' out of '+str(defocus_ct)+' streams')   
-        denoise_options = {
-            "denoise_df_id": [i], 
-            "denoise_df_num": [batch_size],                             
-            "return_denoise_error": True,
-            "store_images": True,
-        }
+        M1_ctf = M1_ctf+jnp.einsum('ni->i',imgs_fft,optimize='greedy')/num_img
+        M2_ctf_I2 = M2_ctf_I2+jnp.einsum('ni,nj->ij',imgs_fft,jnp.conj(imgs_fft_I2),optimize='greedy')/num_img
+        # M2_ctf = M2_ctf+jnp.einsum('ni,nj->ij',imgs_fft,jnp.conj(imgs_fft),optimize='greedy')/num_img
+        M3_ctf_I3 = M3_ctf_I3+jnp.einsum('ni,nj,nk->ijk',imgs_fft_I3,imgs_fft_I3,imgs_fft_I3,optimize='greedy')/num_img
+        M3_ctf_J = M3_ctf_J+jnp.einsum('ni,nj,nk->ijk',imgs_fft,imgs_fft_J1,imgs_fft_J2,optimize='greedy')/num_img
 
-        if use_denoise:
-            results = fast_pca.denoise_images(mean_est=mean_est, 
-                                              covar_est=covar_est, 
-                                              denoise_options=denoise_options)
-            images = results["denoised_images"]*img_size
-        else:
-            indices = np.arange(i*batch_size, min(((i+1)*batch_size),N))
-            images = source.projections[indices].shift(source.sim_offsets[indices, :])
-            images = images.asnumpy()*img_size
-        images = image_downsample(images, ds_res, True)
+        M2_ctf_I = M2_ctf_I+jnp.einsum('ni,nj->ij',imgs_fft_I,jnp.conj(imgs_fft_I),optimize='greedy')/num_img
+        M3_ctf_I = M3_ctf_I+jnp.einsum('ni,nj,nk->ijk',imgs_fft_I,imgs_fft_I,imgs_fft_I,optimize='greedy')/num_img
 
+        mask_M1 = mask_M1+H2/defocus_ct
+        mask_I2 = mask_I2+jnp.einsum('i,j->ij',H2,H2[I2],optimize='greedy')/defocus_ct
+        # mask_M2 = mask_M2+jnp.einsum('i,j->ij',H2,H2,optimize='greedy')/defocus_ct
+        H2_I3 = H2[I3]
+        mask_I3 = mask_I3+jnp.einsum('i,j,k->ijk',H2_I3,H2_I3,H2_I3,optimize='greedy')/defocus_ct
+        mask_J = mask_J+jnp.einsum('i,j,k->ijk',H2,H2[J1],H2[J2],optimize='greedy')/defocus_ct
+
+        H2_I = H2[I]
+        mask_II = mask_II+jnp.einsum('i,j->ij',H2_I,H2_I,optimize='greedy')/defocus_ct
+        mask_III = mask_III+jnp.einsum('i,j,k->ijk',H2_I,H2_I,H2_I,optimize='greedy')/defocus_ct
+        t2 = time.time()
+        t_form = t_form+t2-t1 
+
+    t1 = time.time()
+    if var>0:
         
-        for image in images:
-            I = image.reshape(ds_res2, 1, order='F')
-            I_trans = I.T
-            M1 = M1 + I/N 
-            M2 = M2 + I @ (I_trans @ G)/N
-            M3 = M3 + I @ ((I_trans @ G1) * (I_trans @ G2))/N
+        _M1_ctf = M1_ctf.flatten(order='F')
+
+        p = np.arange(img_size2)
+        i =  p %  img_size
+        j =  p // img_size  
+        i_flip = (-i) % img_size
+        j_flip = (-j) % img_size
+        p_flip_full = i_flip + img_size * j_flip  
+        rev = np.full(img_size2, -1, dtype=int)
+        rev[ind] = np.arange(ds_res2)             
+        p_flip_sub = p_flip_full[ind]               
+        P_sub_idx = rev[p_flip_sub]                
+        P_sub = np.zeros((ds_res2, ds_res2), dtype=int)
+        rows = np.arange(ds_res2)
+        idx = (P_sub_idx >= 0)
+        P_sub[rows[idx], P_sub_idx[idx]] = 1
+        scale = (ds_res**4/img_size**2)
+
+
+        _M1_ctf_I  = _M1_ctf[I]       
+        _M1_ctf_I3 = _M1_ctf[I3]
+        _M1_ctf_J1 = _M1_ctf[J1]
+        _M1_ctf_J2 = _M1_ctf[J2]
         
-        t2 = time.time() 
-        print('spent '+str(t2-t1)+' seconds')
+        P_sub_I = P_sub[np.ix_(I, I)]
+        P_sub_I3 = P_sub[np.ix_(I3, I3)]
+        P_sub_J1J2  = P_sub[np.ix_(J1, J2)]
+        P_sub_J2 = P_sub[:,J2]    
+        P_sub_J1 = P_sub[:,J1] 
 
+        B2_I = 0 
+        B2_I2 = 0
+        B3_J = 0
+        B3_I = 0
+        B3_I3 = 0
+        _scale = (scale*var/defocus_ct)
+        for i in trange(defocus_ct):
+            H = h_ctfs[i].evaluate_grid(img_size)
+            H = H.flatten(order='F')[ind]
 
-    U2, S2, _ = svd(M2, full_matrices=False)
-    r2 = np.argmax(np.cumsum(S2**2) / np.sum(S2**2) > (1 - tol2))+1
-    U2 = U2[:,0:r2]
-    U3, S3, _ = svd(M3, full_matrices=False)
-    r3 = np.argmax(np.cumsum(S3**2) / np.sum(S3**2) > (1 - tol3))+1
-    U3 = U3[:,0:r3]
+            H_I = H[I]       
+            H_I3 = H[I3] 
+            H_J1 = H[J1]
+            H_J2 = H[J2]   
 
-   
-    U2_fft = np.zeros(U2.shape, dtype=np.complex128)
-    for i in range(r2):
-        img = U2[:,i].reshape(ds_res, ds_res, order='F')
-        img_fft = centered_fft2(img)/ds_res 
-        U2_fft[:,i] = img_fft.flatten(order='F')
+            FF_trans_I = H_I[:, None]*P_sub_I *H_I[None, :]
+            FF_trans_I3 = H_I3[:, None]*P_sub_I3 *H_I3[None, :]
+
+            B2_I = B2_I + _scale *jnp.diag(H_I**2)
+            B2_I2 = B2_I2 + _scale *(jnp.diag(H)@jnp.diag(H)[:,I2])
+            B3_I = B3_I + _scale *jnp.einsum('i,jk->ijk',_M1_ctf_I,FF_trans_I) 
+            B3_I3 = B3_I3 + _scale *jnp.einsum('i,jk->ijk',_M1_ctf_I3,FF_trans_I3)
         
-    U3_fft = np.zeros(U3.shape, dtype=np.complex128)
-    for i in range(r3):
-        img = U3[:,i].reshape(ds_res, ds_res, order='F')
-        img_fft = centered_fft2(img)/ds_res 
-        U3_fft[:,i] = img_fft.flatten(order='F')
-    
-    m1 = np.zeros((r2,1))
-    m2 = np.zeros((r2,r2))
-    m3 = np.zeros((r3,r3,r3))
-
-
-    for i in range(defocus_ct):
-        t1 = time.time()
-        print('forming from stream '+str(i+1)+' out of '+str(defocus_ct)+' streams')
-        denoise_options = {
-            "denoise_df_id": [i], 
-            "denoise_df_num": [batch_size],                                    
-            "return_denoise_error": True,
-            "store_images": True,
-        }
-        if use_denoise:
-            results = fast_pca.denoise_images(mean_est=mean_est, 
-                                              covar_est=covar_est, 
-                                              denoise_options=denoise_options)
-            images = results["denoised_images"]*img_size
-        else:
-            indices = np.arange(i*batch_size, min(((i+1)*batch_size),N))
-            images = source.projections[indices].shift(source.sim_offsets[indices, :])
-            images = images.asnumpy()*img_size
-        images = image_downsample(images, ds_res, False)
-        
-        for image in images:
-            I = image.reshape(ds_res2, 1, order='F')
-            I2 = np.conj(U2_fft).T @ I 
-            I3 = np.conj(U3_fft).T @ I 
-            I3 = I3.flatten()
-            m1 = m1+I2/N
-            m2 = m2+(I2 @ np.conj(I2).T)/N
-            m3 = m3+np.einsum('i,j,k->ijk',I3,I3,I3)/N
-        
-        t2 = time.time() 
-        print('spent '+str(t2-t1)+' seconds')
-
-    return U2_fft, U3_fft, m1, m2, m3
-    
-    
-
-
-def momentPCA_rNLA(vol, rots, r2_max, r3_max, tol2, tol3, ds_res, s):  
-    
-    Vol = Volume(np.array(vol,dtype=np.float32))
-    L = vol.shape[0]
-    Ntot = rots.shape[0]
-    Nbat = 1000
-    ds_res2 = ds_res**2
-    
-    np.random.seed(42)
-    G = np.random.normal(0,1,(ds_res2, r2_max))
-    G1 = np.random.normal(0,1,(ds_res2, r3_max))
-    G2 = np.random.normal(0,1,(ds_res2, r3_max))
-    nstream = math.ceil(Ntot/Nbat)
-
-    # Vol = Volume(vol)
-    M1 = np.zeros((ds_res**2,1),dtype=np.complex128)
-    M2 = np.zeros((ds_res**2,r2_max),dtype=np.complex128)
-    M3 = np.zeros((ds_res**2,r3_max),dtype=np.complex128)
-    for i in range(nstream):
-        t1 = time.time()
-        print('sketching stream '+str(i+1)+' out of '+str(nstream)+' streams')
-        _rots = rots[(i*Nbat):min(((i+1)*Nbat),Ntot),:,:]     
-        # Rots = Rotation(_rots)
-        # images = Vol.project(Rots).downsample(ds_res=ds_res, zero_nyquist=False).asnumpy()
-        
-        
-        # images = vol_proj(vol, _rots, s, i)
-        images = Vol.project(Rotation(_rots)).asnumpy()*L
-        images = image_downsample(images, ds_res, True)
-        
-        for image in images:
-            I = image.reshape(ds_res2, 1, order='F')
-            I_trans = I.T
-            M1 = M1 + I/Ntot 
-            M2 = M2 + I @ (I_trans @ G)/Ntot
-            M3 = M3 + I @ ((I_trans @ G1) * (I_trans @ G2))/Ntot 
-        t2 = time.time() 
-        print('spent '+str(t2-t1)+' seconds')
-        
-    if s>0:
-        H = get_preprocessing_matrix(L, ds_res)
-        B2 = s**2 * H @ (np.conj(H.T) @ G)
-        M2 = M2-B2 
-
-        # B3 = 0 
-        # M1_trans = M1.T 
-        # for i in range(L**2):
-        #     Hi = H[:,i].reshape(-1,1)
-        #     Hi_trans = Hi.T
-        #     B3 = B3 + s**2 * M1@((Hi_trans @ G1)*(Hi_trans @ G2))
-        #     B3 = B3 + s**2 * Hi@((M1_trans @ G1)*(Hi_trans @ G2))
-        #     B3 = B3 + s**2 * Hi@((Hi_trans @ G1)*(M1_trans @ G2))
-
-        X = H.T @ G1        
-        Y = H.T @ G2        
-        A = M1.T @ G1       
-        B = M1.T @ G2      
-        term1 = M1 @ np.sum(X * Y, axis=0, keepdims=True) 
-        term2 = H @ (A * Y)  
-        term3 = H @ (X * B)  
-        B3 = s**2 * (term1 + term2 + term3) 
-        M3 = M3-B3 
-        
-    U2, S2, _ = svd(M2, full_matrices=False)
-    r2 = np.argmax(np.cumsum(S2**2) / np.sum(S2**2) > (1 - tol2))+1
-    U2 = U2[:,0:r2]
-    U3, S3, _ = svd(M3, full_matrices=False)
-    r3 = np.argmax(np.cumsum(S3**2) / np.sum(S3**2) > (1 - tol3))+1
-    U3 = U3[:,0:r3]
-
-   
-    U2_fft = np.zeros(U2.shape, dtype=np.complex128)
-    for i in range(r2):
-        img = U2[:,i].reshape(ds_res, ds_res, order='F')
-        img_fft = centered_fft2(img)/ds_res 
-        U2_fft[:,i] = img_fft.flatten(order='F')
-        
-    U3_fft = np.zeros(U3.shape, dtype=np.complex128)
-    for i in range(r3):
-        img = U3[:,i].reshape(ds_res, ds_res, order='F')
-        img_fft = centered_fft2(img)/ds_res 
-        U3_fft[:,i] = img_fft.flatten(order='F')
-        
-    
-    return U2, U3, U2_fft, U3_fft, M1, M2, M3 
-
-
-def form_subspace_moments(vol, rots, U2_fft, U3_fft, s):
-    
-    Vol = Volume(np.array(vol,dtype=np.float32))
-    L = vol.shape[0]
-    ds_res2, r2 = U2_fft.shape
-    ds_res = int(math.sqrt(ds_res2))
-    r3 = U3_fft.shape[1]
-    Ntot = rots.shape[0]
-    Nbat = 1000
-    nstream = math.ceil(Ntot/Nbat)
-    
-    # Vol = Volume(vol)
-    m1 = np.zeros((r2,1))
-    if s>0:
-        U3_M1 = np.zeros((r3,1),dtype=np.complex128)
-    m2 = np.zeros((r2,r2))
-    m3 = np.zeros((r3,r3,r3))
-    for i in range(nstream):
-        t1 = time.time()
-        print('forming from stream '+str(i+1)+' out of '+str(nstream)+' streams')
-        _rots = rots[(i*Nbat):min((i+1)*Nbat,Ntot),:,:]     
-        # Rots = Rotation(_rots)
-        # imags = Vol.project(Rots).downsample(ds_res=ds_res, zero_nyquist=False).asnumpy()
-
-        # imags = vol_proj(vol, _rots, s, i)
-        images = Vol.project(Rotation(_rots)).asnumpy()*L
-        images = image_downsample(images, ds_res, False)
-        
-        for image in images:
-            I = image.reshape(ds_res2, 1, order='F')
-            I2 = np.conj(U2_fft).T @ I 
-            I3 = np.conj(U3_fft).T @ I 
-            if s>0:
-                U3_M1 = U3_M1+I3/Ntot 
-            I3 = I3.flatten()
-            m1 = m1+I2/Ntot 
-            m2 = m2+(I2 @ np.conj(I2).T)/Ntot 
-            m3 = m3+np.einsum('i,j,k->ijk',I3,I3,I3)/Ntot 
             
-        t2 = time.time() 
-        print('spent '+str(t2-t1)+' seconds')
-        
-    if s>0:
-        H = get_preprocessing_matrix(L, ds_res)
+            A = H_J1[:, None]*P_sub_J1J2*H_J2[None, :]
+            B = H[:, None]*P_sub_J2*H_J2[None, :]  
+            C = H[:, None]*P_sub_J1*H_J1[None, :] 
 
-        b2 = np.conj(U2_fft.T) @ H 
-        b2 = s**2 * (b2 @ np.conj(b2.T))
+            term1 = _M1_ctf[:, None, None]*A[None, :, :]
+            term2 = _M1_ctf_J1[None, :, None]*B[:, None, :]
+            term3 = C[:, :, None]*_M1_ctf_J2[None, None, :]
+
+            B3_J = B3_J + _scale *(term1+term2+term3) 
+
+
+        B3_I = B3_I + B3_I.transpose(1,0,2) + B3_I.transpose(1,2,0)
+        B3_I3 = B3_I3 + B3_I3.transpose(1,0,2) + B3_I3.transpose(1,2,0) 
+        M2_ctf_I = M2_ctf_I-B2_I
+        M2_ctf_I2 = M2_ctf_I2-B2_I2
+        M3_ctf_I = M3_ctf_I-B3_I
+        M3_ctf_I3 = M3_ctf_I3-B3_I3
+        M3_ctf_J = M3_ctf_J-B3_J
+
+        
+    # deconvolve and compress
+    M2_I2 = M2_ctf_I2/mask_I2
+    U2_cur = M2_I2    
+    m2_cur = LA.pinv(M2_I2[I2,:],1e-5)
+    m2, U2, r2, _ = trim_symmetric_lowrank(m2_cur, U2_cur, tol2, r2_max)
+    print('r2='+str(r2))
+
+    M3_I3 = M3_ctf_I3/mask_I3
+    M3_J = M3_ctf_J/mask_J
+    M3_J = M3_J.reshape(ds_res2,-1,order='F')
+    U3_cur = M3_J @ LA.pinv(M3_J[I3,:],1e-5)
+    m3_cur = M3_I3
+    m3, U3, r3, _ = trim_symmetric_tucker(m3_cur, U3_cur, tol3, r3_max)
+    print('r3='+str(r3))
+
+    M1 = M1_ctf/mask_M1
+    m1 = jnp.conj(U2).T @ M1 
+    t2 = time.time()
+    t_form = t_form+t2-t1 
+
+    M2_est = M2_ctf_I/mask_II
+    M3_est = M3_ctf_I/mask_III
+    M2_approx = U2[I,:] @ m2 @ jnp.conj(U2[I,:]).T
+    M3_approx = jnp.einsum('abc,ia,jb,kc->ijk',m3,U3[I,:],U3[I,:],U3[I,:])
+    relerr2 = tns_norm(M2_approx-M2_est)/tns_norm(M2_est)
+    relerr3 = tns_norm(M3_approx-M3_est)/tns_norm(M3_est)
+
+
+    print(relerr2)
+    print(relerr3)
+
+    subMoMs = {}
+    subMoMs['relerr2'] = relerr2
+    subMoMs['relerr3'] = relerr3
+    subMoMs['m1'] = np.array(m1,dtype=np.complex64)
+    subMoMs['m2'] = np.array(m2,dtype=np.complex64)
+    subMoMs['m3'] = np.array(m3,dtype=np.complex64)
+    subMoMs['U2'] = np.array(U2,dtype=np.complex64)
+    subMoMs['U3'] = np.array(U3,dtype=np.complex64)
+    subMoMs['M1'] = np.array(M1,dtype=np.complex64)
+    subMoMs['m2_cur'] = np.array(m2_cur,dtype=np.complex64)
+    subMoMs['m3_cur'] = np.array(m3_cur,dtype=np.complex64)
+    subMoMs['U2_cur'] = np.array(U2_cur,dtype=np.complex64)
+    subMoMs['U3_cur'] = np.array(U3_cur,dtype=np.complex64)
+    subMoMs['I'] = np.array(I)
+    subMoMs['M3_est'] = np.array(M3_est,dtype=np.complex64)
+    subMoMs['M2_est'] = np.array(M2_est,dtype=np.complex64)
+    subMoMs['t_form'] = t_form
+    return subMoMs
+
+
+def image_subspace_moments_gaussian(vol, rotmats, opts):
+    r2_max = opts['r2_max'] 
+    r3_max = opts['r3_max']
+    tol2 = opts['tol2']
+    tol3 = opts['tol3'] 
+    ds_res = opts['ds_res'] 
+    var = opts['var'] 
+    img_size = vol.shape[0]
+    num_img = rotmats.shape[0]
+    batch_size = 1000
+    num_stream = math.ceil(num_img/batch_size)
+    ds_res2 = ds_res**2 
+
+    G = jnp.array(np.random.normal(0,1,(ds_res2, r2_max)))
+    G1 = jnp.array(np.random.normal(0,1,(ds_res2, r3_max)))
+    G2 = jnp.array(np.random.normal(0,1,(ds_res2, r3_max)))
+
+    M1 = 0
+    M2_G = 0 
+    M3_G = 0
+
+    for i in tqdm(range(num_stream)):
+        np.random.seed(i)
+        _rotmats = rotmats[(i*batch_size):min((i+1)*batch_size,num_img),:,:]    
+        projs_fft = jnp.array(vol_ds_proj_ft(vol, _rotmats, ds_res),dtype=jnp.complex64)
+        noise = jnp.array(np.random.normal(0,np.sqrt(var),(projs_fft.shape[0],img_size,img_size)),dtype=jnp.float32)
+        imgs_fft = projs_fft + image_downsample(noise, ds_res, False)
+
+        
+        imgs_fft = imgs_fft.reshape(imgs_fft.shape[0],ds_res**2,order='F')
+        imgs_fft_G = jnp.conj(imgs_fft) @ G
+        imgs_fft_G1 = imgs_fft @ G1
+        imgs_fft_G2 = imgs_fft @ G2
+        M1 = M1+jnp.einsum('ni->i',imgs_fft)/num_img
+        M2_G = M2_G+jnp.einsum('ni,nj->ij',
+                                       imgs_fft,imgs_fft_G,
+                                       optimize='greedy')/num_img
+        M3_G = M3_G+jnp.einsum('ni,nj,nj->ij',
+                                       imgs_fft,imgs_fft_G1,imgs_fft_G2,
+                                       optimize='greedy')/num_img
+    
+    
+    if var>0:
+        F = get_centered_fft2_submtx(img_size, row_id=get_subindices(img_size, ds_res))*(ds_res**2/img_size**2)
+        F = jnp.array(F)
+        B2_G = var*F@((jnp.conj(F).T)@G)
+        M2_G = M2_G-B2_G
+
+        X = G1.T @ F            
+        Y = G2.T @ F           
+        M = M1.flatten()  
+        A = G1.T @ M            
+        B = G2.T @ M   
+        term1 = jnp.einsum('p,kn,kn->pk',M,X,Y)   
+        term2 = jnp.einsum('pn,kn,k->pk',F,Y,A)    
+        term3 = jnp.einsum('pn,kn,k->pk',F,X,B)  
+        B3_G = var * (term1 + term2 + term3) 
+        M3_G = M3_G-B3_G 
+
+    U2,S2,_ = LA.svd(M2_G,False)
+    r2 = np.argmax(np.cumsum(S2**2) / np.sum(S2**2) > (1 - tol2))+1
+    U2 = U2[:,:r2]
+    U3,S3,_ = LA.svd(M3_G,False)
+    r3 = np.argmax(np.cumsum(S3**2) / np.sum(S3**2) > (1 - tol3))+1
+    U3 = U3[:,:r3]
+
+    m1 = np.conj(U2.T)@M1 
+    m2 = 0 
+    m3 = 0
+    U2 = jnp.array(U2)
+    U3 = jnp.array(U3)
+    for i in tqdm(range(num_stream)):
+        np.random.seed(i)
+        _rotmats = rotmats[(i*batch_size):min((i+1)*batch_size,num_img),:,:] 
+        projs_fft = jnp.array(vol_ds_proj_ft(vol, _rotmats, ds_res),dtype=jnp.complex64)
+        noise = jnp.array(np.random.normal(0,np.sqrt(var),(projs_fft.shape[0],img_size,img_size)),dtype=jnp.float32)
+        imgs_fft = projs_fft + image_downsample(noise, ds_res, False)
+
+
+        
+        imgs_fft = imgs_fft.reshape(imgs_fft.shape[0],ds_res**2,order='F')
+        imgs_fft_U2 = jnp.einsum('ni,ij->nj',
+                                 imgs_fft,jnp.conj(U2),
+                                 optimize='greedy')
+        m2 = m2+jnp.einsum('ni,nj->ij',
+                                   imgs_fft_U2,jnp.conj(imgs_fft_U2),
+                                   optimize='greedy')/num_img
+    
+        imgs_fft_U3 = jnp.einsum('ni,ij->nj',
+                                 imgs_fft,jnp.conj(U3),
+                                 optimize='greedy')
+        m3 = m3+jnp.einsum('ni,nj,nk->ijk',
+                                   imgs_fft_U3,imgs_fft_U3,imgs_fft_U3,
+                                   optimize='greedy')/num_img
+    
+    if var>0:
+        b2 = var*(jnp.conj(U2.T)@F)@((jnp.conj(F).T)@U2)
         m2 = m2-b2 
+
+        U3_H = jnp.conj(U3).T        
+        X = U3_H @ F             
+        m = (U3_H @ M1).ravel() 
+        term1 = jnp.einsum('a,bi,ci->abc',m,X,X) 
+        term2 = term1.transpose(1,0,2)
+        term3 = term1.transpose(1,2,0)
+        b3 = var * (term1 + term2 + term3)  
+        m3 = m3-b3  
         
-        # b3 = 0 
-        # U3_M1 = U3_M1.flatten(order='F')
-        # for i in range(L**2):
-        #     Hi = H[:,i].reshape(-1,1)
-        #     U3_Hi = (np.conj(U3_fft).T @ Hi).flatten(order='F')
-        #     b3 = b3+s**2 * np.einsum('i,j,k->ijk', U3_M1, U3_Hi, U3_Hi)
-        #     b3 = b3+s**2 * np.einsum('i,j,k->ijk', U3_Hi, U3_M1, U3_Hi)
-        #     b3 = b3+s**2 * np.einsum('i,j,k->ijk', U3_Hi, U3_Hi, U3_M1)
-        U3_H = np.conj(U3_fft).T @ H 
-        U3_M1 = U3_M1.flatten(order='F')
-        term1 = np.einsum('i,jm,km->ijk', U3_M1, U3_H, U3_H)
-        term2 = np.einsum('im,j,km->ijk', U3_H, U3_M1, U3_H)
-        term3 = np.einsum('im,jm,k->ijk', U3_H, U3_H, U3_M1)
-        b3 = s**2 * (term1 + term2 + term3)
-        m3 = m3-b3 
+            
+    m1 = np.array(m1)
+    m2 = np.array(m2)
+    m3 = np.array(m3)
+    U2 = np.array(U2)
+    U3 = np.array(U3)
 
-    return m1,m2,m3
+    return m1, m2, m3, U2, U3
+
+
+
+def translated_image_subspace_moments_gaussian(vol, rotmats, opts):
+    r2_max = opts['r2_max'] 
+    r3_max = opts['r3_max']
+    tol2 = opts['tol2']
+    tol3 = opts['tol3'] 
+    batch_size = opts['batch_size'] 
+    batch_number = opts['batch_number'] 
+    ds_res = opts['ds_res'] 
+    var = opts['var'] 
+    img_size = vol.shape[0]
+    num_img = rotmats.shape[0]
+    ds_res2 = ds_res**2 
+
+    G = jnp.array(np.random.normal(0,1,(ds_res2, r2_max)))
+    G1 = jnp.array(np.random.normal(0,1,(ds_res2, r3_max)))
+    G2 = jnp.array(np.random.normal(0,1,(ds_res2, r3_max)))
+
+    M1 = 0
+    M2_G = 0 
+    M3_G = 0
+
+    offsets = np.sqrt(var)*np.random.normal(0,1,(num_img,2))
+
+    sim = Simulation(L=img_size,
+                    n=num_img,
+                    amplitudes=1.0,
+                    vols=Volume(vol),
+                    offsets=offsets,
+                    dtype=np.float32)
+    sim.rotations = rotmats
     
 
+    for i in trange(batch_number):   
+        imgs = sim.images[(i*batch_size):min((i+1)*batch_size,num_img)].asnumpy()*ds_res
+        # imgs = vol_proj(vol, rotmats[(i*batch_size):min((i+1)*batch_size,num_img),:,:])
+        # imgs_fft = jnp.array(image_downsample(imgs, ds_res, if_real=False),dtype=jnp.complex64)
+        imgs_fft = centered_fft2(imgs)
+        imgs_fft = imgs_fft.reshape(imgs_fft.shape[0],ds_res**2,order='F')
+        imgs_fft_G = jnp.conj(imgs_fft) @ G
+        imgs_fft_G1 = imgs_fft @ G1
+        imgs_fft_G2 = imgs_fft @ G2
+        M1 = M1+jnp.einsum('ni->i',imgs_fft)/num_img
+        M2_G = M2_G+jnp.einsum('ni,nj->ij',
+                                       imgs_fft,imgs_fft_G,
+                                       optimize='greedy')/num_img
+        M3_G = M3_G+jnp.einsum('ni,nj,nj->ij',
+                                       imgs_fft,imgs_fft_G1,imgs_fft_G2,
+                                       optimize='greedy')/num_img
 
-def coef_t_subspace_moments(vol_coef, ell_max_vol, k_max, r0, indices_vol, rot_coef, ell_max_half_view, opts):
+
+    U2,S2,_ = LA.svd(M2_G,False)
+    r2 = np.argmax(np.cumsum(S2**2) / np.sum(S2**2) > (1 - tol2))+1
+    if r2>r2_max:
+        r2 = r2_max
+    print('r2 =',str(r2))
+    U2 = U2[:,:r2]
     
+    U3,S3,_ = LA.svd(M3_G,False)
+    r3 = np.argmax(np.cumsum(S3**2) / np.sum(S3**2) > (1 - tol3))+1
+    if r3>r3_max:
+        r3 = r3_max
+    print('r3 =',str(r3))
+    U3 = U3[:,:r3]
+
+    m1 = np.conj(U2.T)@M1 
+    m2 = 0 
+    m3 = 0
+    U2 = jnp.array(U2)
+    U3 = jnp.array(U3)
+    for i in trange(batch_number):
+        imgs = sim.images[(i*batch_size):min((i+1)*batch_size,num_img)].asnumpy()*ds_res
+        # imgs = vol_proj(vol, rotmats[(i*batch_size):min((i+1)*batch_size,num_img),:,:])
+        # imgs_fft = jnp.array(image_downsample(imgs, ds_res, if_real=False, zero_nyquist=True),dtype=jnp.complex64)
+        imgs_fft = centered_fft2(imgs)
+        imgs_fft = imgs_fft.reshape(imgs_fft.shape[0],ds_res**2,order='F')
+        imgs_fft_U2 = jnp.einsum('ni,ij->nj',
+                                 imgs_fft,jnp.conj(U2),
+                                 optimize='greedy')
+        m2 = m2+jnp.einsum('ni,nj->ij',
+                                   imgs_fft_U2,jnp.conj(imgs_fft_U2),
+                                   optimize='greedy')/num_img
+    
+        imgs_fft_U3 = jnp.einsum('ni,ij->nj',
+                                 imgs_fft,jnp.conj(U3),
+                                 optimize='greedy')
+        m3 = m3+jnp.einsum('ni,nj,nk->ijk',
+                                   imgs_fft_U3,imgs_fft_U3,imgs_fft_U3,
+                                   optimize='greedy')/num_img
+            
+            
+    m1 = np.array(m1)
+    m2 = np.array(m2)
+    m3 = np.array(m3)
+    U2 = np.array(U2)
+    U3 = np.array(U3)
+
+    return m1, m2, m3, U2, U3
+
+
+
+def analytical_subspace_moments_gaussian(vol_coef, ell_max_vol, k_max, r0, indices_vol, rot_coef, ell_max_half_view, opts):
+    np.random.seed(1)
     c = 0.5 
     r2_max = opts['r2_max']
     r3_max = opts['r3_max']
     tol2 = opts['tol2']
     tol3 = opts['tol3']
     grid = opts['grid']
-
+    img_size = opts['img_size']
+    ds_res = opts['ds_res']
     n_grid = len(grid.xs)
     n_basis = len(indices_vol)
+    ind = get_subindices(img_size, ds_res)
+    I = jnp.array(sample_idxs(img_size,ds_res,60))
     
     precomp_vol_basis = precompute_sphFB_basis(ell_max_vol, k_max, r0, indices_vol, grid)
 
     # form the uncompressed first moment  
+    t_m1 = time.time()
     euler_nodes, weights = load_so3_quadrature(ell_max_vol, 2*ell_max_half_view)
     precomp_view_basis = precompute_rot_density(rot_coef, ell_max_half_view, euler_nodes)
     rot_density = precomp_view_basis @ rot_coef
-    M1 = np.zeros([n_grid,1], dtype=np.complex128)
+    U1 = np.random.normal(0,1,[n_grid, min(400,n_grid)])
+    U1, _ = np.linalg.qr(U1, mode='reduced')
+    m1 = 0
     print('getting the first moment')
-    for i in range(len(weights)):
+    for i in trange(len(weights)):
         vol_coef_rot = rotate_sphFB(vol_coef, ell_max_vol, k_max, indices_vol, euler_nodes[i,:])
         fft_Img = precomp_vol_basis @ vol_coef_rot
         fft_Img = fft_Img.reshape(-1,1)
-        M1 += weights[i]*rot_density[i]*fft_Img
-        fft_Img = fft_Img.flatten()
+        m1 += weights[i]*rot_density[i]*(U1.T@fft_Img)
+    t_m1 = time.time()-t_m1
 
     # form the projected second moment 
+    t_m2 = time.time()
     euler_nodes, weights = load_so3_quadrature(2*ell_max_vol, 2*ell_max_half_view)
     precomp_view_basis = precompute_rot_density(rot_coef, ell_max_half_view, euler_nodes)
     rot_density = precomp_view_basis @ rot_coef
-    M2 = 0 
-
+    M2_G = 0 
+    M2_I = 0 
     G = np.random.normal(0,1,[n_grid, r2_max])
     print('getting the second moment')
-    for i in range(len(weights)):
+    for i in trange(len(weights)):
         vol_coef_rot = rotate_sphFB(vol_coef, ell_max_vol, k_max, indices_vol, euler_nodes[i,:])
         fft_Img = precomp_vol_basis @ vol_coef_rot
         fft_Img = fft_Img.reshape(-1,1)
-        M2 += (weights[i]*rot_density[i]*fft_Img) @ (np.conj(fft_Img).T @ G)
+        M2_G += (weights[i]*rot_density[i]*fft_Img) @ (np.conj(fft_Img).T @ G)
+        fft_Img = fft_Img[I,:]
+        M2_I = M2_I + weights[i]*rot_density[i]*fft_Img @ np.conj(fft_Img).T
 
 
-    U2, S2, _ = svd(M2, full_matrices=False)
+    U2, S2, _ = svd(M2_G, full_matrices=False)
     cumulative_energy = np.cumsum(S2**2) / np.sum(S2**2)
     r2 = np.argmax(cumulative_energy > (1 - tol2)) + 1
     U2 = U2[:,:r2]
+    print('r2 =',str(r2))
 
 
     m2 = 0 
-    for i in range(len(weights)):
+    print('from the second subspace moment')
+    for i in trange(len(weights)):
         vol_coef_rot = rotate_sphFB(vol_coef, ell_max_vol, k_max, indices_vol, euler_nodes[i,:])
         fft_Img = precomp_vol_basis @ vol_coef_rot
         fft_Img = fft_Img.reshape(-1,1)
         fft_Img = np.conj(U2).T @ fft_Img
         m2 += weights[i]*rot_density[i]*(fft_Img @ np.conj(fft_Img).T)
-        
+    t_m2 = time.time()-t_m2
         
 
     # form the projected third moment 
-    print('getting the third moment')
+    t_m3 = time.time()
+    print('sketch the third moment')
     euler_nodes, weights = load_so3_quadrature(3*ell_max_vol, 2*ell_max_half_view)
     precomp_view_basis = precompute_rot_density(rot_coef, ell_max_half_view, euler_nodes)
     rot_density = precomp_view_basis @ rot_coef
-    M3 = 0 
+    M3_G = 0 
+    M3_I = 0 
     G1 = np.random.normal(0,1,[n_grid, r3_max])
     G2 = np.random.normal(0,1,[n_grid, r3_max])
-    for i in range(len(weights)):
+    for i in trange(len(weights)):
         vol_coef_rot = rotate_sphFB(vol_coef, ell_max_vol, k_max, indices_vol, euler_nodes[i,:])
         fft_Img = precomp_vol_basis @ vol_coef_rot
         fft_Img = fft_Img.reshape(-1,1)
-        M3 += (weights[i]*rot_density[i]*fft_Img) @ ((fft_Img.T @ G1) * (fft_Img.T @ G2))
+        M3_G += (weights[i]*rot_density[i]*fft_Img) @ ((fft_Img.T @ G1) * (fft_Img.T @ G2))
+        fft_Img = fft_Img.flatten()[I]
+        M3_I += (weights[i]*rot_density[i]) * np.einsum('i,j,k->ijk', fft_Img,fft_Img,fft_Img)
 
-    U3, S3, _ = svd(M3, full_matrices=False)
+    U3, S3, _ = svd(M3_G, full_matrices=False)
     cumulative_energy = np.cumsum(S3**2) / np.sum(S3**2)
     r3 = np.argmax(cumulative_energy > (1 - tol3)) + 1
     U3 = U3[:,:r3]
+    print('r3 =',str(r3))
 
-
+    print('from the third subspace moment')
     m3 = 0
-    for i in range(len(weights)):
+    for i in trange(len(weights)):
         vol_coef_rot = rotate_sphFB(vol_coef, ell_max_vol, k_max, indices_vol, euler_nodes[i,:])
         fft_Img = precomp_vol_basis @ vol_coef_rot
         fft_Img = np.conj(U3).T @ fft_Img
         m3 += weights[i]*rot_density[i]*np.einsum('i,j,k->ijk', fft_Img, fft_Img, fft_Img)
-    
+    t_m3 = time.time()-t_m3
+
+    M2_I_approx = U2[I,:] @ m2 @ np.conj(U2[I,:]).T
+    M3_I_approx = np.einsum('abc,ia,jb,kc->ijk',m3,U3[I,:],U3[I,:],U3[I,:],optimize='greedy')
+
+    relerr2 = tns_norm(M2_I_approx-M2_I) / tns_norm(M2_I)
+    relerr3 = tns_norm(M3_I_approx-M3_I) / tns_norm(M3_I)
+    print('relerr2 =',str(relerr2))
+    print('relerr3 =',str(relerr3))
 
     subMoMs = {}
     subMoMs['G'] = G 
     subMoMs['G1'] = G1 
     subMoMs['G2'] = G2 
-    subMoMs['M1'] = M1 
-    subMoMs['m1'] = np.conj(U2).T @ M1 
-    subMoMs['M2'] = M2 
+    subMoMs['m1'] = m1
+    subMoMs['M2_G'] = M2_G 
     subMoMs['m2'] = m2 
-    subMoMs['M3'] = M3 
+    subMoMs['M3_G'] = M3_G 
     subMoMs['m3'] = m3 
+    subMoMs['U1'] = U1 
     subMoMs['U2'] = U2 
     subMoMs['U3'] = U3 
     subMoMs['S2'] = S2
     subMoMs['S3'] = S3
+    subMoMs['t_m1'] = t_m1
+    subMoMs['t_m2'] = t_m2
+    subMoMs['t_m3'] = t_m3
+    subMoMs['relerr2'] = relerr2
+    subMoMs['relerr3'] = relerr3
     return subMoMs
 
 
@@ -434,67 +710,36 @@ def moment_LS(x0, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, 
     linear_constraint = {'type': 'ineq', 'fun': lambda x: b_constr - A_constr @ x}
     objective = lambda x: find_cost_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3)
     result = minimize(objective, x0, method='SLSQP', jac=True, constraints=[linear_constraint],
-        options={'disp': True,'maxiter':5000, 'ftol':1e-9, 'iprint':2, 'eps': 1e-4})
+        options={'disp': True,'maxiter':5000, 'ftol':1e-10, 'iprint':2, 'eps': 1e-4})
     
     return result 
 
 
 
-def find_cost(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3):
+def moment_LS_analytical_test(x0, quadrature_rules, Phi_precomps, Psi_precomps, 
+                              m1_emp, m2_emp, m3_emp, 
+                              A_constr, b_constr, 
+                              l1=None, l2=None, l3=None):
     
-    _, w_so3_m2 = quadrature_rules['m2']
-    _, w_so3_m3 = quadrature_rules['m3']
-
-    # covert to jax array 
-    x, w_so3_m2, w_so3_m3 = jnp.array(x), jnp.array(w_so3_m2), jnp.array(w_so3_m3)
-
-    # compute the cost and gradient from the three moments
-    if l1>0:
-       cost1 = find_cost_m1(x, w_so3_m2, Phi_precomps['m2'], Psi_precomps['m2'], m1_emp, l1)
-    else:
-        cost1 = 0
-    if l2>0:
-        cost2 = find_cost_m2(x, w_so3_m2, Phi_precomps['m2'], Psi_precomps['m2'], m2_emp, l2)
-    else:
-        cost2 = 0
-    if l3>0:
-        cost3 = find_cost_m3(x, w_so3_m3, Phi_precomps['m3'], Psi_precomps['m3'], m3_emp, l3)
-    else:
-        cost3 = 0
-
-    cost = cost1+cost2+cost3 
-    return cost 
-
-
-
-
-def find_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3):
+    if l1 is None:
+        l1 = LA.norm(m1_emp.flatten())**2
+    if l2 is None:
+        l2 = LA.norm(m2_emp.flatten())**2
+    if l3 is None:
+        l3 = LA.norm(m3_emp.flatten())**2
     
-    _, w_so3_m2 = quadrature_rules['m2']
-    _, w_so3_m3 = quadrature_rules['m3']
-
-    # covert to jax array 
-    x, w_so3_m2, w_so3_m3 = jnp.array(x), jnp.array(w_so3_m2), jnp.array(w_so3_m3)
-
-    # compute the cost and gradient from the three moments
-    if l1>0:
-       grad1 = find_grad_m1(x, w_so3_m2, Phi_precomps['m2'], Psi_precomps['m2'], m1_emp, l1)
-    else:
-        grad1 = jnp.zeros(x.shape)
-    if l2>0:
-        grad2 = find_grad_m2(x, w_so3_m2, Phi_precomps['m2'], Psi_precomps['m2'], m2_emp, l2)
-    else:
-        grad2 = jnp.zeros(x.shape)
-    if l3>0:
-        cost3, grad3 = find_grad_m3(x, w_so3_m3, Phi_precomps['m3'], Psi_precomps['m3'], m3_emp, l3)
-    else:
-        grad3 = jnp.zeros(x.shape)
+    linear_constraint = {'type': 'ineq', 'fun': lambda x: b_constr - A_constr @ x}
+    objective = lambda x: find_cost_grad_analytical_test(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3)
+    result = minimize(objective, x0, method='SLSQP', jac=True, constraints=[linear_constraint],
+        options={'disp': True,'maxiter':5000, 'ftol':1e-10, 'iprint':2, 'eps': 1e-4})
 
 
-    grad = grad1+grad2+grad3 
-    return grad
-
-
+    # linear_constraint = {'type': 'ineq', 'fun': lambda x: b_constr - A_constr @ x}
+    # objective = lambda x: find_cost_grad_analytical_test(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3)
+    # result = minimize(objective, x0, method='SLSQP', jac=True, 
+    #     options={'disp': True,'maxiter':5000, 'ftol':1e-8, 'iprint':2, 'eps': 1e-4})
+    
+    return result 
 
 
 def find_cost_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3):
@@ -509,15 +754,45 @@ def find_cost_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_e
 
     # compute the cost and gradient from the three moments
     if l1>0:
-       cost1, grad1 = find_cost_grad_m1(x, w_so3_m2, Phi_precomps['m2'], Psi_precomps['m2'], m1_emp, l1)
+       cost1, grad1 = find_cost_grad_m1_einsum(x, w_so3_m2, Phi_precomps['m2'], Psi_precomps['m2'], m1_emp, l1)
     else:
         cost1, grad1 = 0, np.zeros(x.shape)
     if l2>0:
-        cost2, grad2 = find_cost_grad_m2(x, w_so3_m2, Phi_precomps['m2'], Psi_precomps['m2'], m2_emp, l2)
+        cost2, grad2 = find_cost_grad_m2_einsum(x, w_so3_m2, Phi_precomps['m2'], Psi_precomps['m2'], m2_emp, l2)
     else:
         cost2, grad2 = 0, np.zeros(x.shape)
     if l3>0:
-        cost3, grad3 = find_cost_grad_m3(x, w_so3_m3, Phi_precomps['m3'], Psi_precomps['m3'], m3_emp, l3)
+        cost3, grad3 = find_cost_grad_m3_einsum(x, w_so3_m3, Phi_precomps['m3'], Psi_precomps['m3'], m3_emp, l3)
+    else:
+        cost3, grad3 = 0, np.zeros(x.shape)
+
+    cost = cost1+cost2+cost3 
+    grad = grad1+grad2+grad3 
+    return np.array(cost), np.array(grad)
+
+
+def find_cost_grad_analytical_test(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3):
+
+    _, w_so3_m1 = quadrature_rules['m1']
+    _, w_so3_m2 = quadrature_rules['m2']
+    _, w_so3_m3 = quadrature_rules['m3']
+    # Phi = Phi_precomps['m2']
+    # Psi = Psi_precomps['m3']
+
+    # covert to jax array 
+    x, w_so3_m1, w_so3_m2, w_so3_m3 = jnp.array(x), jnp.array(w_so3_m1), jnp.array(w_so3_m2), jnp.array(w_so3_m3)
+
+    # compute the cost and gradient from the three moments
+    if l1>0:
+        cost1, grad1 = find_cost_grad_m1_einsum(x, w_so3_m1, Phi_precomps['m1'], Psi_precomps['m1'], m1_emp, l1)
+    else:
+        cost1, grad1 = 0, np.zeros(x.shape)
+    if l2>0:
+        cost2, grad2 = find_cost_grad_m2_einsum(x, w_so3_m2, Phi_precomps['m2'], Psi_precomps['m2'], m2_emp, l2)
+    else:
+        cost2, grad2 = 0, np.zeros(x.shape)
+    if l3>0:
+        cost3, grad3 = find_cost_grad_m3_einsum(x, w_so3_m3, Phi_precomps['m3'], Psi_precomps['m3'], m3_emp, l3)
     else:
         cost3, grad3 = 0, np.zeros(x.shape)
 
@@ -559,82 +834,19 @@ def find_cost_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_e
 #     return cost / l1,  np.real(grad) / l1
 
 
-@jit 
-def find_cost_m1(x, w_so3, Phi, Psi, m1_emp, l1):
-    na = Phi.shape[2]
-    a, b = x[:na], x[na:]
-    b1 = jnp.concatenate([jnp.array([1.0]), b])
-    n = len(w_so3)
-    PCs = jnp.einsum('ijk,k->ij', Phi, a)
-    w = w_so3 * jnp.real(Psi @ b1)
-
-    m1_emp = m1_emp.flatten()
-    m1 = jnp.zeros(PCs.shape[1], dtype=jnp.complex128)
-    
-    def body_fun(i, m1):
-        return m1 + w[i] * PCs[i, :]
-    
-    m1 = jax.lax.fori_loop(0, n, body_fun, m1)
-    
-    C1 = m1 - m1_emp
-    cost = norm(C1.flatten())**2 
-    
-    return cost / l1
-
-
-
-
-@jit 
-def find_grad_m1(x, w_so3, Phi, Psi, m1_emp, l1):
-    na = Phi.shape[2]
-    a, b = x[:na], x[na:]
-    b1 = jnp.concatenate([jnp.array([1.0]), b])
-    n = len(w_so3)
-    PCs = jnp.einsum('ijk,k->ij', Phi, a)
-    w = w_so3 * jnp.real(Psi @ b1)
-
-    m1_emp = m1_emp.flatten()
-    m1 = jnp.zeros(PCs.shape[1], dtype=jnp.complex128)
-    
-    def body_fun(i, m1):
-        return m1 + w[i] * PCs[i, :]
-    
-    m1 = jax.lax.fori_loop(0, n, body_fun, m1)
-    
-    C1 = m1 - m1_emp
-    C1_conj = jnp.conj(C1)
-    
-    
-    grad_a = jnp.zeros(Phi.shape[2])
-    grad_rho = jnp.zeros(n)
-    
-    def grad_body_fun(i, val):
-        grad_a, grad_rho = val
-        grad_a += 2 * w[i] * jnp.real(jnp.conj(Phi[i, :, :]).T @ C1)
-        grad_rho = grad_rho.at[i].set(2 * w_so3[i] * jnp.sum(jnp.real(PCs[i, :] * C1_conj)))
-        return grad_a, grad_rho
-    
-    grad_a, grad_rho = jax.lax.fori_loop(0, n, grad_body_fun, (grad_a, grad_rho))
-    
-    grad_b = jnp.conj(Psi).T @ grad_rho
-    grad = jnp.concatenate([grad_a, grad_b[1:]])
-    
-    return jnp.real(grad) / l1
-    
-    
 
 
 @jit 
 def find_cost_grad_m1(x, w_so3, Phi, Psi, m1_emp, l1):
     na = Phi.shape[2]
     a, b = x[:na], x[na:]
-    b1 = jnp.concatenate([jnp.array([1.0]), b])
+    b1 = jnp.concatenate([jnp.array([1.0],dtype=b.dtype), b])
     n = len(w_so3)
     PCs = jnp.einsum('ijk,k->ij', Phi, a)
     w = w_so3 * jnp.real(Psi @ b1)
 
     m1_emp = m1_emp.flatten()
-    m1 = jnp.zeros(PCs.shape[1], dtype=jnp.complex128)
+    m1 = jnp.zeros(PCs.shape[1], dtype=m1_emp.dtype)
     
     def body_fun(i, m1):
         return m1 + w[i] * PCs[i, :]
@@ -663,121 +875,18 @@ def find_cost_grad_m1(x, w_so3, Phi, Psi, m1_emp, l1):
     return cost / l1, jnp.real(grad) / l1
     
 
-# def find_cost_grad_m2(x, w_so3, Phi, Psi, m2_emp, l2):
-    
-#     na = Phi.shape[2]
-#     a, b = x[:na],x[na:]
-#     b1 = np.concatenate([np.array([1]), b])
-#     n = len(w_so3)
-#     PCs = np.einsum('ijk,k->ij', Phi, a)
-#     w = w_so3*np.real(Psi @ b1) 
-
-#     d = PCs.shape[1]
-#     m2 = np.zeros((d,d), dtype=np.complex128)
-#     PC_dots = np.zeros((n,d,d), dtype=np.complex128)
-#     for i in range(n):
-#         Img =  PCs[i,:].reshape((-1,1))
-#         PC_dots[i,:,:] = Img @ np.conj(Img).T
-#         m2 = m2+w[i]*PC_dots[i,:,:]
-#     C2 = m2-m2_emp
-#     C2_conj = np.conj(C2)
-
-#     cost = LA.norm(C2.flatten())**2 
-
-
-#     grad_a = np.zeros(Phi.shape[2])
-#     grad_rho = np.zeros(n)
-#     for i in range(n):
-#         grad_a = grad_a + 4*w[i]*np.real(Phi[i,:,:].T @ (C2_conj @ np.conj(PCs[i,:])))
-#         grad_rho[i] = 2*w_so3[i]*np.real(np.sum(PC_dots[i,:,:]*C2_conj))
-
-#     grad_b = np.conj(Psi).T @ grad_rho
-#     grad = np.concatenate([grad_a, grad_b[1:]])
-
-#     return cost / l2,  np.real(grad) / l2
-
-
-@jit 
-def find_cost_m2(x, w_so3, Phi, Psi, m2_emp, l2):
-    na = Phi.shape[2]
-    a, b = x[:na], x[na:]
-    b1 = jnp.concatenate([jnp.array([1.0]), b])
-    n = len(w_so3)
-    PCs = jnp.einsum('ijk,k->ij', Phi, a)
-    w = w_so3 * jnp.real(Psi @ b1)
-
-    d = PCs.shape[1]
-    m2 = jnp.zeros((d, d), dtype=jnp.complex128)
-    
-    def body_fun(i, m2):
-        Img = PCs[i, :].reshape((-1, 1))
-        PC_dot = Img @ jnp.conj(Img).T
-        return m2 + w[i] * PC_dot
-    
-    m2 = jax.lax.fori_loop(0, n, body_fun, m2)
-    
-    C2 = m2 - m2_emp
-    cost = norm(C2.flatten())**2 
-    return cost / l2
-
-
-
-
-@jit 
-def find_grad_m2(x, w_so3, Phi, Psi, m2_emp, l2):
-    na = Phi.shape[2]
-    a, b = x[:na], x[na:]
-    b1 = jnp.concatenate([jnp.array([1.0]), b])
-    n = len(w_so3)
-    PCs = jnp.einsum('ijk,k->ij', Phi, a)
-    w = w_so3 * jnp.real(Psi @ b1)
-
-    d = PCs.shape[1]
-    m2 = jnp.zeros((d, d), dtype=jnp.complex128)
-    
-    def body_fun(i, m2):
-        Img = PCs[i, :].reshape((-1, 1))
-        PC_dot = Img @ jnp.conj(Img).T
-        return m2 + w[i] * PC_dot
-    
-    m2 = jax.lax.fori_loop(0, n, body_fun, m2)
-    
-    C2 = m2 - m2_emp
-    C2_conj = jnp.conj(C2)
-
-    
-    grad_a = jnp.zeros(Phi.shape[2])
-    grad_rho = jnp.zeros(n)
-    
-    def grad_body_fun(i, val):
-        grad_a, grad_rho = val
-        grad_a += 4 * w[i] * jnp.real(Phi[i, :, :].T @ (C2_conj @ jnp.conj(PCs[i, :])))
-        Img = PCs[i, :].reshape((-1, 1))
-        PC_dot = Img @ jnp.conj(Img).T  # Compute on-the-fly
-        grad_rho = grad_rho.at[i].set(2 * w_so3[i] * jnp.real(jnp.sum(PC_dot * C2_conj)))
-        return grad_a, grad_rho
-    
-    grad_a, grad_rho = jax.lax.fori_loop(0, n, grad_body_fun, (grad_a, grad_rho))
-    
-    grad_b = jnp.conj(Psi).T @ grad_rho
-    grad = jnp.concatenate([grad_a, grad_b[1:]])
-    
-    return jnp.real(grad) / l2
-
-
-
 
 @jit 
 def find_cost_grad_m2(x, w_so3, Phi, Psi, m2_emp, l2):
     na = Phi.shape[2]
     a, b = x[:na], x[na:]
-    b1 = jnp.concatenate([jnp.array([1.0]), b])
+    b1 = jnp.concatenate([jnp.array([1.0], dtype=b.dtype), b])
     n = len(w_so3)
     PCs = jnp.einsum('ijk,k->ij', Phi, a)
     w = w_so3 * jnp.real(Psi @ b1)
 
     d = PCs.shape[1]
-    m2 = jnp.zeros((d, d), dtype=jnp.complex128)
+    m2 = jnp.zeros((d, d), dtype=m2_emp.dtype)
     
     def body_fun(i, m2):
         Img = PCs[i, :].reshape((-1, 1))
@@ -810,126 +919,18 @@ def find_cost_grad_m2(x, w_so3, Phi, Psi, m2_emp, l2):
     return cost / l2, jnp.real(grad) / l2
 
 
-# def find_cost_grad_m3(x, w_so3, Phi, Psi, m3_emp, l3):
-    
-#     na = Phi.shape[2]
-#     a, b = x[:na],x[na:]
-#     b1 = np.concatenate([np.array([1]), b])
-#     n = len(w_so3)
-#     PCs = np.einsum('ijk,k->ij', Phi, a)
-#     w = w_so3*np.real(Psi @ b1) 
-
-#     d = PCs.shape[1]
-#     m3 = np.zeros((d,d,d), dtype=np.complex128)
-#     PC_dots = np.zeros((n,d,d,d), dtype=np.complex128)
-#     for i in range(n):
-#         Img =  PCs[i,:]
-#         PC_dots[i,:,:,:] = np.einsum('i,j,k->ijk',Img,Img,Img)
-#         m3 = m3+w[i]*PC_dots[i,:,:,:]
-#     C3 = m3-m3_emp
-#     C3_conj = np.conj(C3)
-#     C3_conj_mat = np.reshape(C3_conj,[d,d**2])
-
-#     cost = LA.norm(C3.flatten())**2 
-
-
-#     grad_a = np.zeros(Phi.shape[2])
-#     grad_rho = np.zeros(n)
-#     for i in range(n):
-#         Img = PCs[i,:]
-#         Img2 = np.einsum('i,j->ij',Img,Img)
-#         tmp = C3_conj_mat @ Img2.flatten()
-#         grad_a = grad_a + 6*w[i]*np.real(Phi[i,:,:].T @ tmp)
-#         grad_rho[i] = 2*w_so3[i]*np.real(np.sum(PC_dots[i,:,:,:]*C3_conj))
-
-#     grad_b = np.conj(Psi).T @ grad_rho
-#     grad = np.concatenate([grad_a, grad_b[1:]])
-
-#     return cost / l3,  np.real(grad) / l3
-
-
-@jit 
-def find_cost_m3(x, w_so3, Phi, Psi, m3_emp, l3):
-    na = Phi.shape[2]
-    a, b = x[:na], x[na:]
-    b1 = jnp.concatenate([jnp.array([1.0]), b])
-    n = len(w_so3)
-    PCs = jnp.einsum('ijk,k->ij', Phi, a)
-    w = w_so3 * jnp.real(Psi @ b1)
-
-    d = PCs.shape[1]
-    m3 = jnp.zeros((d, d, d), dtype=jnp.complex128)
-    
-    def body_fun(i, m3):
-        Img = PCs[i, :]
-        PC_dot = jnp.einsum('i,j,k->ijk', Img, Img, Img)
-        return m3 + w[i] * PC_dot
-    
-    m3 = jax.lax.fori_loop(0, n, body_fun, m3)
-    C3 = m3 - m3_emp
-    cost = norm(C3.flatten())**2 
-    return cost / l3
-
-
-
-
-@jit 
-def find_grad_m3(x, w_so3, Phi, Psi, m3_emp, l3):
-    na = Phi.shape[2]
-    a, b = x[:na], x[na:]
-    b1 = jnp.concatenate([jnp.array([1.0]), b])
-    n = len(w_so3)
-    PCs = jnp.einsum('ijk,k->ij', Phi, a)
-    w = w_so3 * jnp.real(Psi @ b1)
-
-    d = PCs.shape[1]
-    m3 = jnp.zeros((d, d, d), dtype=jnp.complex128)
-    
-    def body_fun(i, m3):
-        Img = PCs[i, :]
-        PC_dot = jnp.einsum('i,j,k->ijk', Img, Img, Img)
-        return m3 + w[i] * PC_dot
-    
-    m3 = jax.lax.fori_loop(0, n, body_fun, m3)
-    
-    C3 = m3 - m3_emp
-    C3_conj = jnp.conj(C3)
-    C3_conj_mat = C3_conj.reshape(d, d**2)
-
-    grad_a = jnp.zeros(Phi.shape[2])
-    grad_rho = jnp.zeros(n)
-    
-    def grad_body_fun(i, val):
-        grad_a, grad_rho = val
-        Img = PCs[i, :]
-        Img2 = jnp.einsum('i,j->ij', Img, Img)
-        tmp = C3_conj_mat @ Img2.flatten()
-        grad_a += 6 * w[i] * jnp.real(Phi[i, :, :].T @ tmp)
-        PC_dot = jnp.einsum('i,j,k->ijk', Img, Img, Img)  # Compute PC_dot on-the-fly
-        grad_rho = grad_rho.at[i].set(2 * w_so3[i] * jnp.real(jnp.sum(PC_dot * C3_conj)))
-        return grad_a, grad_rho
-    
-    grad_a, grad_rho = jax.lax.fori_loop(0, n, grad_body_fun, (grad_a, grad_rho))
-    
-    grad_b = jnp.conj(Psi).T @ grad_rho
-    grad = jnp.concatenate([grad_a, grad_b[1:]])
-    
-    return jnp.real(grad) / l3
-
-
-
 
 @jit 
 def find_cost_grad_m3(x, w_so3, Phi, Psi, m3_emp, l3):
     na = Phi.shape[2]
     a, b = x[:na], x[na:]
-    b1 = jnp.concatenate([jnp.array([1.0]), b])
+    b1 = jnp.concatenate([jnp.array([1.0],dtype=b.dtype), b])
     n = len(w_so3)
     PCs = jnp.einsum('ijk,k->ij', Phi, a)
     w = w_so3 * jnp.real(Psi @ b1)
 
     d = PCs.shape[1]
-    m3 = jnp.zeros((d, d, d), dtype=jnp.complex128)
+    m3 = jnp.zeros((d, d, d), dtype=m3_emp.dtype)
     
     def body_fun(i, m3):
         Img = PCs[i, :]
@@ -966,6 +967,82 @@ def find_cost_grad_m3(x, w_so3, Phi, Psi, m3_emp, l3):
 
 
 
+@jit
+def find_cost_grad_m1_einsum(x, w_so3, Phi, Psi, m1_emp, l1):
+
+    na    = Phi.shape[2]
+    a, b  = x[:na], x[na:]
+    b1    = jnp.concatenate([jnp.array([1.0], dtype=b.dtype), b])  
+    PCs = jnp.einsum('ijk,k->ij', Phi, a, optimize='greedy')       
+    w   = w_so3 * jnp.real(Psi @ b1)           
+    m1  = jnp.einsum('i,ip->p', w, PCs, optimize='greedy')         
+
+    C1   = m1 - m1_emp.flatten()                
+    cost = jnp.linalg.norm(C1)**2 / l1
+    grad_a = 2 * jnp.real(
+        jnp.einsum('i,j,ijk->k', w, C1, jnp.conj(Phi), optimize='greedy')
+    )                                           
+    tmp     = jnp.einsum('ij,j->i', PCs, jnp.conj(C1), optimize='greedy') 
+    grad_rho = 2 * w_so3 * jnp.real(tmp)              
+    grad_b = jnp.conj(Psi).T @ grad_rho               
+    grad   = jnp.concatenate([grad_a, grad_b[1:]]) / l1
+
+    return cost, grad
+    
+
+
+@jit
+def find_cost_grad_m2_einsum(x, w_so3, Phi, Psi, m2_emp, l2):
+
+    na    = Phi.shape[2]
+    a, b  = x[:na], x[na:]
+    b1    = jnp.concatenate([jnp.array([1.0], dtype=b.dtype), b])
+
+    PCs = jnp.einsum('ijk,k->ij', Phi, a, optimize='greedy')         
+    w   = w_so3 * jnp.real(Psi @ b1)             
+    m2 = jnp.einsum('i,ip,iq->pq', w, PCs, jnp.conj(PCs), optimize='greedy')
+
+    C2  = m2 - m2_emp
+    cost = jnp.linalg.norm(C2)**2 / l2
+    C2c = jnp.conj(C2)
+    v = jnp.einsum('rq,iq->ir', C2c, jnp.conj(PCs), optimize='greedy') 
+
+    grad_a = 4 * jnp.real(
+        jnp.einsum('ir,irk->k', w[:,None] * v, Phi, optimize='greedy')
+    )                                                
+    grad_rho = 2 * w_so3 * jnp.real(
+        jnp.einsum('pq,ip,iq->i', C2c, PCs, jnp.conj(PCs), optimize='greedy')
+    )                                                
+    grad_b = jnp.conj(Psi).T @ grad_rho              
+    grad   = jnp.concatenate([grad_a, grad_b[1:]]) / l2
+
+    return cost, grad
+
+
+@jit 
+def find_cost_grad_m3_einsum(x, w_so3, Phi, Psi, m3_emp, l3):
+    na      = Phi.shape[2]
+    a, b    = x[:na], x[na:]
+    b1      = jnp.concatenate([jnp.array([1.0]), b])
+    PCs     = jnp.einsum('ijk,k->ij', Phi, a, optimize='greedy')       
+    w       = w_so3 * jnp.real(Psi @ b1)            
+
+    m3      = jnp.einsum('i,ip,iq,ir->pqr', w, PCs, PCs, PCs, optimize='greedy')
+    C3      = m3 - m3_emp
+    C3c     = jnp.conj(C3)
+    cost    = jnp.linalg.norm(C3)**2 / l3
+    tmp     = jnp.einsum('pqr,ip,iq->ir', C3c, PCs, PCs, optimize='greedy')   
+
+    grad_a  = 6 * jnp.real(
+                  jnp.einsum('i,ir,irk->k', w, tmp, Phi, optimize='greedy')
+              )
+    grad_rho = 2 * w_so3 * jnp.real(jnp.sum(tmp * PCs, axis=1))
+    grad_b  = jnp.conj(Psi).T @ grad_rho
+    grad    = jnp.concatenate([grad_a, grad_b[1:]]) / l3
+
+    return cost, grad
+
+
 
 def precomputation(ell_max_vol, k_max, r0, indices_vol, ell_max_half_view, subspaces, quadrature_rules, grid):
 
@@ -987,6 +1064,30 @@ def precomputation(ell_max_vol, k_max, r0, indices_vol, ell_max_half_view, subsp
 
 
 
+def precomputation_analytical_test(ell_max_vol, k_max, r0, indices_vol, ell_max_half_view, subspaces, quadrature_rules, grid):
+
+    U1 = subspaces['m1']
+    U2 = subspaces['m2']
+    U3 = subspaces['m3']
+
+    euler_nodes1, _ = quadrature_rules['m1']
+    euler_nodes2, _ = quadrature_rules['m2']
+    euler_nodes3, _ = quadrature_rules['m3']
+
+    Phi_precomps, Psi_precomps = {}, {}
+
+    Phi_precomps['m1'] = precomp_sphFB_all(U1, ell_max_vol, k_max, r0, indices_vol, euler_nodes1, grid)
+    Phi_precomps['m2'] = precomp_sphFB_all(U2, ell_max_vol, k_max, r0, indices_vol, euler_nodes2, grid)
+    Phi_precomps['m3'] = precomp_sphFB_all(U3, ell_max_vol, k_max, r0, indices_vol, euler_nodes3, grid)
+
+    Psi_precomps['m1'] = precomp_wignerD_all(ell_max_half_view, euler_nodes1)
+    Psi_precomps['m2'] = precomp_wignerD_all(ell_max_half_view, euler_nodes2)
+    Psi_precomps['m3'] = precomp_wignerD_all(ell_max_half_view, euler_nodes3)
+
+    return Phi_precomps, Psi_precomps
+
+
+
 
 def precomp_sphFB_all(U, ell_max, k_max, r0, indices, euler_nodes, grid):
     
@@ -996,12 +1097,12 @@ def precomp_sphFB_all(U, ell_max, k_max, r0, indices, euler_nodes, grid):
     n_basis = len(indices)
     n_grid = len(grid.rs)
     r_idx =  (grid.rs>c)
-    Phi_precomp = np.zeros((n_so3, ndim, n_basis), dtype=np.complex128)
+    Phi_precomp = np.zeros((n_so3, ndim, n_basis), dtype=np.complex64)
 
     lpall = norm_assoc_legendre_all(ell_max, np.cos(grid.ths))
-    lpall /= np.sqrt(4*np.pi)
+    lpall = np.array(lpall / np.sqrt(4*np.pi), dtype=np.complex64)
 
-    exp_all = np.zeros((2*ell_max+1,n_grid), dtype=complex)
+    exp_all = np.zeros((2*ell_max+1,n_grid), dtype=np.complex64)
     for m in range(-ell_max,ell_max+1):
         exp_all[m+ell_max,:] = np.exp(1j*m*grid.phs)
 
@@ -1019,7 +1120,7 @@ def precomp_sphFB_all(U, ell_max, k_max, r0, indices, euler_nodes, grid):
 
     Yl = {} 
     for ell in range(0,ell_max+1):
-        yl = np.zeros((n_grid, 2*ell+1), dtype=np.complex128)
+        yl = np.zeros((n_grid, 2*ell+1), dtype=np.complex64)
         for m in range(-ell,ell+1):
             lpmn = lpall[ell,abs(m),:]
             if m<0:
@@ -1028,7 +1129,7 @@ def precomp_sphFB_all(U, ell_max, k_max, r0, indices, euler_nodes, grid):
         Yl[ell] = yl  
 
 
-    for i in range(n_so3):
+    for i in tqdm(range(n_so3)):
         alpha, beta, gamma = euler_nodes[i,:]
         for ell in range(0,ell_max+1):
             D_l = wignerD(ell, alpha, beta, gamma)
@@ -1040,7 +1141,7 @@ def precomp_sphFB_all(U, ell_max, k_max, r0, indices, euler_nodes, grid):
         Phi_precomp[i,:,:] = Phi_precomp[i,:,:] @ sphFB_r_t_c
 
 
-    return jnp.array(Phi_precomp)
+    return jnp.array(Phi_precomp, dtype=jnp.complex64)
 
 
 
@@ -1057,8 +1158,8 @@ def precomp_wignerD_all(ell_max_half, euler_nodes):
               n_coef += 1
 
     sph_r_t_c , _ =  get_sph_r_t_c_mat(ell_max_half)
-    Psi_precomp = np.zeros((n_grid, n_coef), dtype=np.complex128)
-    for i in range(n_grid):
+    Psi_precomp = np.zeros((n_grid, n_coef), dtype=np.complex64)
+    for i in tqdm(range(n_grid)):
         alpha,beta,gamma = euler_nodes[i,:]
         for ell in range(ell_max+1):
             if ell%2 == 0:
@@ -1067,7 +1168,7 @@ def precomp_wignerD_all(ell_max_half, euler_nodes):
     
     Psi_precomp = np.real(Psi_precomp @ sph_r_t_c)
     
-    return jnp.array(Psi_precomp)
+    return jnp.array(Psi_precomp, dtype=jnp.float32)
 
 
 
@@ -1114,6 +1215,256 @@ def get_linear_ineqn_constraint(ell_max_half):
 
 
 
+# def image_subspace_moments_CUR(vol, rotmats, h_ctfs, opts):
+#     r2_max = opts['r2_max'] 
+#     r3_max = opts['r3_max']
+#     tol2 = opts['tol2']
+#     tol3 = opts['tol3'] 
+#     ds_res = opts['ds_res'] 
+#     defocus_ct = opts['defocus_ct'] 
+#     batch_size = opts['batch_size'] 
+#     var = opts['var'] 
 
+#     img_size = vol.shape[0]
+#     plan = plan_vol_ds_proj_ft(img_size)
+#     img_size2 = img_size**2 
+#     num_img = rotmats.shape[0]
+#     ds_res2 = ds_res**2 
+#     ind = get_subindices(img_size, ds_res)
+
+#     G = jnp.array(np.random.normal(0,1,(ds_res2, r2_max)))
+#     G1 = jnp.array(np.random.normal(0,1,(ds_res2, r3_max)))
+#     G2 = jnp.array(np.random.normal(0,1,(ds_res2, r3_max)))
+
+#     # compress the masked moments 
+#     M1_ctf = 0
+#     M2_ctf_G = 0
+#     M3_ctf_G = 0
+
+#     print('sketch moments')
+#     for i in trange(defocus_ct):
+#         # np.random.seed(i)
+#         _rotmats = rotmats[(i*batch_size):(i+1)*batch_size,:,:]    
+#         H = jnp.array(h_ctfs[i].evaluate_grid(img_size))
+#         H = H.flatten(order='F')[ind]
+#         H2 = H**2
+#         projs_fft = jnp.array(vol_ds_proj_ft_planned(vol, _rotmats, ds_res, plan),dtype=jnp.complex64)
+#         projs_fft = projs_fft.reshape(batch_size,ds_res2,order='F')
+#         imgs_fft = projs_fft * H2[None,:]
+#         if var>0:
+#             noise = jnp.sqrt(var)*jax.random.normal(key=jax.random.key(i),shape=(batch_size, img_size, img_size),dtype=jnp.float32)
+#             noise_fft = image_downsample(noise, ds_res, False)
+#             noise_fft = jnp.array(noise_fft.reshape(batch_size,ds_res**2,order='F'))
+#             imgs_fft = imgs_fft+noise_fft * H[None,:]
+#         M1_ctf = M1_ctf + jnp.einsum('ni->i',imgs_fft,optimize='greedy')/num_img
+#         M2_ctf_G = M2_ctf_G + jnp.einsum('ni,nj->ij',imgs_fft,jnp.conj(imgs_fft)@G,optimize='greedy')/num_img
+#         M3_ctf_G = M3_ctf_G + jnp.einsum('ni,nj,nj->ij',imgs_fft,imgs_fft@G1,imgs_fft@G2,optimize='greedy')/num_img
+#     M1_ctf = M1_ctf.reshape(ds_res2,1,order='F')
+
+    
+   
+#     if var>0:
+#         print('remove bias from sketched moments')
+#         p = np.arange(img_size2)
+#         i =  p %  img_size
+#         j =  p // img_size  
+#         i_flip = (-i) % img_size
+#         j_flip = (-j) % img_size
+#         p_flip_full = i_flip + img_size * j_flip  
+#         rev = np.full(img_size2, -1, dtype=int)
+#         rev[ind] = np.arange(ds_res2)             
+#         p_flip_sub = p_flip_full[ind]               
+#         P_sub_idx = rev[p_flip_sub]                
+#         P_sub = np.zeros((ds_res2, ds_res2), dtype=int)
+#         rows = np.arange(ds_res2)
+#         mask = (P_sub_idx >= 0)
+#         P_sub[rows[mask], P_sub_idx[mask]] = 1
+#         _M1 = jnp.squeeze(M1_ctf)                   
+#         A = G1.T @ _M1                             
+#         B = G2.T @ _M1        
+#         # F = (ds_res/img_size)**2 * get_centered_fft2_submtx(img_size, ind)
+#         # conjF_T = jnp.conj(F).T 
+#         B2_ctf_G = jnp.zeros((ds_res2, r2_max), dtype=jnp.complex128)
+#         B3_ctf_G = jnp.zeros((ds_res2, r3_max), dtype=jnp.complex128)
+#         scale = (ds_res2/img_size2)**2*var/defocus_ct
+#         for i in trange(defocus_ct):
+#             h = jnp.array(h_ctfs[i].evaluate_grid(img_size)).flatten(order='F')[ind]
+#             # ----- B2 update  -----
+#             w = img_size2*(h**2)                   
+#             B2_ctf_G = B2_ctf_G + scale*(w[:, None]*G)
+#             # ----- B3 update  -----
+#             WG1 = h[:,None]*G1       
+#             WG2 = h[:,None]*G2
+#             WG1f = jnp.dot(P_sub,WG1) 
+#             WG2f = jnp.dot(P_sub,WG2)
+#             XY    = img_size2*jnp.sum(WG1*WG2f,axis=0)  
+#             M2b   = img_size2*(h[:, None]*WG2f)    
+#             M3b   = img_size2*(h[:, None]*WG1f)
+#             term1 = _M1[:, None]*XY[None, :]        
+#             term2 = M2b*A[None, :]         
+#             term3 = M3b*B[None, :]       
+#             B3_ctf_G = B3_ctf_G + scale * (term1 + term2 + term3)
+#             # h = (jnp.array(h_ctfs[i].evaluate_grid(img_size))
+#             #        .flatten(order='F')[ind])            
+#             # HF = h[:, None] * F                        
+        
+#             # # ----- B2 update -----
+#             # X = conjF_T @ (h[:, None] * G)             
+#             # B2_ctf_G = B2_ctf_G + var * (HF @ X) / defocus_ct
+        
+#             # # ----- B3 update -----
+#             # X  = G1.T @ HF                              
+#             # Y  = G2.T @ HF                             
+#             # XY = jnp.sum(X * Y, axis=1)                
+#             # M2b = HF @ Y.T                              
+#             # M3b = HF @ X.T                               
+        
+#             # term1 = _M1[:, None] * XY[None, :]             
+#             # term2 = M2b * A[None, :]                       
+#             # term3 = M3b * B[None, :]                        
+        
+#             # B3_ctf_G = B3_ctf_G + var * (term1 + term2 + term3) / defocus_ct
+
+            
+#         # B2_ctf_G = 0 
+#         # B3_ctf_G = 0 
+#         # _M1_ctf = jnp.squeeze(M1_ctf)
+#         # F = (ds_res/img_size)**2 * get_centered_fft2_submtx(img_size, ind)
+#         # for i in trange(defocus_ct):
+#         #     H = jnp.array(h_ctfs[i].evaluate_grid(img_size))
+#         #     H = H.flatten(order='F')[ind]
+#         #     H = jnp.diag(H)
+#         #     B2_ctf_G = B2_ctf_G + var*(H @ F) @ (jnp.conj(F.T)@ H @G)/defocus_ct
+#         #     HF = H@F
+#         #     X = G1.T @ HF            
+#         #     Y = G2.T @ HF           
+#         #     A = G1.T @ _M1_ctf         
+#         #     B = G2.T @ _M1_ctf
+#         #     term1 = jnp.einsum('p,kn,kn->pk',_M1_ctf,X,Y)   
+#         #     term2 = jnp.einsum('pn,kn,k->pk',HF,Y,A)    
+#         #     term3 = jnp.einsum('pn,kn,k->pk',HF,X,B)  
+#         #     B3_ctf_G = B3_ctf_G + var*(term1+term2+term3) / defocus_ct
+#         M2_ctf_G = M2_ctf_G - B2_ctf_G
+#         M3_ctf_G = M3_ctf_G - B3_ctf_G
+
+    
+#     U2_ctf,_,_ = LA.svd(M2_ctf_G,False)
+#     U3_ctf,_,_ = LA.svd(M3_ctf_G,False)
+
+
+#     I2 = jnp.array(sorted(random.sample(range(ds_res2), r2_max+60)))
+#     I3 = jnp.array(sorted(random.sample(range(ds_res2), r3_max+60)))
+#     J1 = jnp.array(sorted(random.sample(range(ds_res2), r3_max+20)))
+#     J2 = jnp.array(sorted(random.sample(range(ds_res2), r3_max+20)))
+
+#     m2_ctf = 0 
+#     m3_ctf = 0 
+#     H_M1 = 0 
+#     H_M2_I2 = 0
+#     H_M3_I3 = 0 
+#     H_M3_J1_J2 = 0
+#     print('form compressed moments')
+#     for i in trange(defocus_ct):
+#         np.random.seed(i)
+#         _rotmats = rotmats[(i*batch_size):(i+1)*batch_size,:,:]    
+#         H = jnp.array(h_ctfs[i].evaluate_grid(img_size))
+#         H = H.flatten(order='F')[ind]
+#         H2 = H**2
+#         H_M1 = H_M1+H2/defocus_ct
+#         H_M2_I2 = H_M2_I2+jnp.einsum('i,j->ij',H2,H2[I2],optimize='greedy')/defocus_ct
+#         H_M3_I3 = H_M3_I3+jnp.einsum('i,j,k->ijk',H2[I3],H2[I3],H2[I3],optimize='greedy')/defocus_ct
+#         H_M3_J1_J2 = H_M3_J1_J2+jnp.einsum('i,j,k->ijk',H2,H2[J1],H2[J2],optimize='greedy')/defocus_ct
+
+
+#         projs_fft = jnp.array(vol_ds_proj_ft_planned(vol, _rotmats, ds_res, plan),dtype=jnp.complex64)
+#         imgs_fft = projs_fft.reshape(batch_size,ds_res2,order='F') * H2[None,:]
+#         if var>0:
+#             noise = jnp.sqrt(var)*jax.random.normal(key=jax.random.key(i),shape=(batch_size, img_size, img_size),dtype=jnp.float32)
+#             noise_fft = image_downsample(noise, ds_res, False)
+#             noise_fft = jnp.array(noise_fft.reshape(batch_size,ds_res**2,order='F'))
+#             imgs_fft = imgs_fft+noise_fft*H[None,:]
+#         imgs_fft_U2 = jnp.einsum('ni,ij->nj',imgs_fft,jnp.conj(U2_ctf),optimize='greedy')
+#         imgs_fft_U3 = jnp.einsum('ni,ij->nj',imgs_fft,jnp.conj(U3_ctf),optimize='greedy')
+#         m2_ctf = m2_ctf + jnp.einsum('ni,nj->ij',imgs_fft_U2,jnp.conj(imgs_fft_U2),optimize='greedy')/num_img
+#         m3_ctf = m3_ctf + jnp.einsum('ni,nj,nk->ijk',imgs_fft_U3,imgs_fft_U3,imgs_fft_U3,optimize='greedy')/num_img
+
+#     if var>0:
+#         print('remove bias from compressed moments')
+#         U2_H = jnp.conj(U2_ctf).T               
+#         U3_H = jnp.conj(U3_ctf).T                
+#         _m1 = (U3_H @ _M1).ravel()             
+#         b2_ctf = jnp.zeros((r2_max, r2_max), dtype=jnp.complex128)
+#         b3_ctf = jnp.zeros((r3_max, r3_max, r3_max), dtype=jnp.complex128)
+        
+#         for i in trange(defocus_ct):
+#             h = jnp.array(h_ctfs[i].evaluate_grid(img_size)).flatten(order='F')[ind]
+#             # --- b2_ctf update ---
+#             w = img_size2*(h**2)                          
+#             b2_ctf = b2_ctf + scale * (U2_H @ (w[:, None] * U2_ctf))
+#             # --- b3_ctf update --
+#             HU3    = h[:, None] * U3_ctf
+#             PHU3   = jnp.dot(P_sub, HU3)   
+#             WPHU3  = h[:, None] * PHU3                   
+#             S      = img_size2 * (U3_H @ WPHU3)        
+#             term1  = _m1[:, None, None] * S[None, :, :] 
+#             term2  = term1.transpose(1, 0, 2)
+#             term3  = term1.transpose(1, 2, 0)
+#             b3_ctf = b3_ctf + scale * (term1 + term2 + term3)
+#             # h_full = jnp.array(h_ctfs[i].evaluate_grid(img_size))
+#             # h = h_full.flatten(order='F')[ind]  
+#             # HF  = h[:, None] * F                     
+#             # HG2 = h[:, None] * U2_ctf                
+#             # # ——— b2_ctf update ———
+#             # X2 = U2_H @ HF                            
+#             # Y2 = conjF_T @ HG2                        
+#             # b2_ctf = b2_ctf + var * (X2 @ Y2) / defocus_ct
+        
+#             # # ——— b3_ctf update ———
+#             # X3 = U3_H @ HF                            
+#             # S  = X3 @ X3.T                            
+#             # term1 = _m1[:, None, None] * S[None, :, :]    
+#             # term2 = term1.transpose(1, 0, 2)
+#             # term3 = term1.transpose(1, 2, 0)
+        
+#             # b3_ctf = b3_ctf + var * (term1 + term2 + term3) / defocus_ct
+#         # b2_ctf = 0 
+#         # b3_ctf = 0 
+#         # for i in trange(defocus_ct):
+#         #     H = h_ctfs[i].evaluate_grid(img_size)
+#         #     H = H.flatten(order='F')[ind]
+#         #     H = jnp.diag(H)
+#         #     b2_ctf = b2_ctf + var*( (jnp.conj(U2_ctf.T)@ H @ F) @ (jnp.conj(F).T @ H  @ U2_ctf))/defocus_ct
+#         #     U3_H = jnp.conj(U3_ctf).T       
+#         #     X = U3_H @ (H@F)             
+#         #     m = (U3_H @ M1_ctf).ravel() 
+#         #     term1 = jnp.einsum('a,bi,ci->abc',m,X,X) 
+#         #     term2 = term1.transpose(1,0,2)
+#         #     term3 = term1.transpose(1,2,0)
+#         #     b3_ctf = b3_ctf+var * (term1 + term2 + term3) / defocus_ct
+#         m2_ctf = m2_ctf-b2_ctf
+#         m3_ctf = m3_ctf-b3_ctf  
+        
+#     print('deconvolve the mask and compress via CUR')
+#     H_M1 = H_M1.reshape(ds_res2,1,order='F')
+#     M1 = M1_ctf / H_M1
+#     M2_ctf_I2 = U2_ctf @ m2_ctf @ jnp.conj(U2_ctf[I2,:]).T
+#     M2_I2 = M2_ctf_I2/H_M2_I2
+#     m2_cur = LA.pinv(M2_I2[I2,:])
+#     U2_cur = M2_I2
+#     m2,U2,r2,S2 = trim_symmetric_lowrank(m2_cur,U2_cur,tol2)
+#     print('r2='+str(r2))
+
+#     M3_ctf_I3 = jnp.einsum('ijk,ai,bj,ck->abc',m3_ctf,U3_ctf[I3,:],U3_ctf[I3,:],U3_ctf[I3,:],optimize='greedy')
+#     M3_I3 = M3_ctf_I3/H_M3_I3
+#     M3_ctf_J1_J2 = jnp.einsum('ijk,ai,bj,ck->abc',m3_ctf,U3_ctf,U3_ctf[J1,:],U3_ctf[J2,:],optimize='greedy')
+#     M3_J1_J2 = M3_ctf_J1_J2/H_M3_J1_J2
+#     M3_J1_J2 = M3_J1_J2.reshape(ds_res2,-1,order='F')
+#     U3_cur = M3_J1_J2 @ np.linalg.pinv(M3_J1_J2[I3,:]) 
+#     m3_cur = M3_I3
+#     m3, U3, r3, S3 = trim_symmetric_tucker(m3_cur, U3_cur, tol3)
+#     print('r3='+str(r3))
+
+#     m1 = jnp.conj(U2).T @ M1 
+#     return np.array(m1), np.array(m2), np.array(m3), np.array(U2), np.array(U3)
 
 

@@ -7,7 +7,7 @@ from utils import *
 import pymanopt
 import matplotlib.pyplot as plt
 from scipy.interpolate import PchipInterpolator
-
+from tqdm import trange
 
 def get_sphFB_indices(n,ell_max):
     
@@ -151,6 +151,13 @@ def sphFB_eval(vol_coef, ell_max, k_max, r0, indices, grid):
 def precompute_sphFB_basis(ell_max, k_max, r0, indices, grid):
     """
     precompute Phi[(l,k,m),i] = Ri^T phi_{l,k,m} (r_i,th_i,ph_i) 
+    :param ell_max: The truncation limit for spherical harmonics 
+    :param k_max: The truncation limit for spherical Bessel function 
+    :param r0: Roots of spherical Bessel function 
+    :param indices: Indices mapping of spherical Bessel basis 
+    :param grid: A 3d grid object
+    :return: The precomputed spherical Bessel basis on a 3D grid 
+
     """
 
     n_coef = len(indices)
@@ -243,6 +250,15 @@ def coef_t_vol(vol_coef, ell_max, n, k_max, r0, indices):
 
 
 def get_sphFB_r_t_c_mat(ell_max, k_max, indices):
+    """
+    Get the linear transformation between real and complex coefficients
+    :param ell_max: The truncation limit for spherical harmonics 
+    :param k_max: The truncation limit for spherical Bessel function 
+    :param r0: Roots of spherical Bessel function 
+    :param indices: Indices mapping of spherical Bessel basis 
+    :return sphFB_r_t_c: linear transform from real to complex
+    :return sphFB_r_t_c: linear transform from complex to real
+    """
     nb = sum(k_max * (2 * np.arange(0, ell_max + 1) + 1))
 
     sphFB_r_t_c = np.zeros([nb,nb], dtype=np.complex128)
@@ -269,7 +285,15 @@ def get_sphFB_r_t_c_mat(ell_max, k_max, indices):
 
 
 def rotate_sphFB(vol_coef, ell_max, k_max, indices, euler_angles):
-    
+    """
+    Rotating a volume under spherical Bessel representation
+    :param vol_coef: The spherical Bessel coefficient
+    :param ell_max: The truncation limit for spherical harmonics 
+    :param k_max: The truncation limit for spherical Bessel function 
+    :param indices: Indices mapping of spherical Bessel basis 
+    :param euler_angles: Euler angle representation of the rotation
+    :return vol_coef_rot: The rotated spherical Bessel coefficients
+    """
     vol_coef_rot = np.zeros(vol_coef.shape, dtype=np.complex128)
     alpha, beta, gamma = euler_angles
 
@@ -333,8 +357,9 @@ def align_vol_coef(vol_coef, vol_coef_est, ell_max, k_max, indices):
     cost_ref_initial = 100000000
     Rot0 = None 
     Rot0_ref = None 
-    
-    for i in range(N_rot):
+
+    print('brute forcing...')
+    for i in trange(N_rot):
         Rots[i] = Rz(alpha[i])@Ry(beta[i])@Rz(gamma[i])
         cost_curr = cost(Rots[i])
         cost_ref_curr = cost_ref(Rots[i])
@@ -346,7 +371,7 @@ def align_vol_coef(vol_coef, vol_coef_est, ell_max, k_max, indices):
             Rot0_ref = Rots[i]
     
     
-    
+    print('refining...')
     problem = pymanopt.Problem(manifold=manifold, cost=cost, euclidean_gradient=grad)
     optimizer = pymanopt.optimizers.ConjugateGradient()
     result = optimizer.run(problem,initial_point=Rot0)
@@ -481,32 +506,98 @@ def get_fsc(V1, V2, pixelsize):
     n = len(fsc)
 
     # Plot FSC
-    plt.figure()
-    plt.plot(range(1, n+1), fsc, 'r-*', linewidth=2)
-    plt.xlim([1, n])
-    plt.ylim([-0.1, 1.05])
-    plt.grid(True)
+    # plt.figure()
+    # plt.plot(range(1, n+1), fsc, 'r-*', linewidth=2)
+    # plt.xlim([1, n])
+    # plt.ylim([-0.1, 1.05])
+    # plt.grid(True)
 
-    # Plot 0.5 reference line
-    plt.plot(range(1, n+1), [0.5]*n, 'k--', linewidth=1.5)
+    # # Plot 0.5 reference line
+    # plt.plot(range(1, n+1), [0.5]*n, 'k--', linewidth=1.5)
 
     # Resolution estimate
     j = fscres(fsc, 0.5)  
 
     res = 2 * pixelsize * n / j
 
-    # Update x-ticks with frequency labels
-    df = 1 / (2 * pixelsize * n)
-    xticks = plt.xticks()[0]
-    xtick_labels = [f"{x*df:.3f}" for x in xticks]
-    plt.xticks(xticks, xtick_labels)
+    # # Update x-ticks with frequency labels
+    # df = 1 / (2 * pixelsize * n)
+    # xticks = plt.xticks()[0]
+    # xtick_labels = [f"{x*df:.3f}" for x in xticks]
+    # plt.xticks(xticks, xtick_labels)
 
-    # Axis labels and legend
-#    plt.xlabel(r'$1/\mathrm{\AA}$', fontsize=20)
-#    plt.tick_params(labelsize=20)
-#    plt.legend([fr'{res:.2f} $\mathrm{{\AA}}$'], loc='best', fontsize=20)
+    # # Axis labels and legend
+    # plt.xlabel(r'$1/\mathrm{\AA}$', fontsize=20)
+    # plt.tick_params(labelsize=20)
+    # plt.legend([fr'{res:.2f} $\mathrm{{\AA}}$'], loc='best', fontsize=20)
 
-    plt.tight_layout()
-    plt.show()
+    # plt.tight_layout()
+    # plt.show()
 
     return res
+
+
+def compare_fscs(V1, V_list, pixelsize, labels=None, colors=None, savepath=None):
+    """
+    Compare multiple volumes against a reference and plot FSCs.
+
+    Parameters:
+        V1 : ndarray
+            Reference volume.
+        V_list : list of ndarrays
+            Volumes to compare with V1.
+        pixelsize : float
+            Pixel size in Angstroms.
+        labels : list of str, optional
+            Legend labels.
+        colors : list of str, optional
+            Plot colors.
+        savepath : str, optional
+            If provided, saves the plot to this file (e.g., 'fsc_plot.pdf').
+
+    Returns:
+        resolutions : list of float
+            List of FSC=0.5 resolution estimates.
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    plt.figure()
+    n = None
+    df = None
+    resolutions = []
+
+    if labels is None:
+        labels = [f'Volume {i+1}' for i in range(len(V_list))]
+    if colors is None:
+        colors = ['r', 'b', 'g', 'm', 'c', 'y', 'k'] * 5
+
+    for V2, label, color in zip(V_list, labels, colors):
+        fsc = FSCorr(V1, V2)
+        fsc[0] = 1
+        n = len(fsc)
+        df = 1 / (2 * pixelsize * n)
+        freq = np.arange(1, n+1) * df
+
+        j = fscres(fsc, 0.5)
+        res = 2 * pixelsize * n / j
+        resolutions.append(res)
+
+        plt.plot(freq, fsc, f'{color}-*', label=fr'{label}: {res:.2f} $\mathrm{{\AA}}$', linewidth=2)
+
+    # Plot FSC threshold line
+    plt.axhline(0.5, color='k', linestyle='--', linewidth=1.5)
+
+    plt.xlabel(r'$1/\mathrm{\AA}$', fontsize=20)
+    plt.ylabel('FSC', fontsize=20)
+    plt.ylim([-0.1, 1.05])
+    plt.grid(True)
+    plt.tick_params(labelsize=16)
+    plt.legend(fontsize=14)
+    plt.tight_layout()
+
+    if savepath:
+        plt.savefig(savepath, format='pdf', bbox_inches='tight')
+
+    plt.show()
+    return resolutions

@@ -1,10 +1,12 @@
 import numpy as np 
 import finufft 
 from aspire.basis.basis_utils import lgwt 
+from aspire.numeric import fft
 import e3x
 from scipy.linalg import eigh
 import numpy.linalg as LA 
-
+import jax.numpy as jnp
+from jax import jit
 
 class Grid_2d:
     
@@ -129,9 +131,8 @@ def rot_t_euler(Rot):
 
 
 def load_sph_gauss_quadrature(N):
-    
+
     is_gauss = True 
-    N
     
     if N==1:
         data = np.genfromtxt('../data/sphere_rules/N001_M2_Inv.dat',skip_header=2)
@@ -219,8 +220,8 @@ def load_sph_gauss_quadrature(N):
         nodes = data[:,0:3]
         weights = data[:,3]
 
-    phs = np.pi - np.arctan2(data[:,0],data[:,1])
-    ths = np.arccos(data[:,2])
+    phs = np.pi - np.arctan2(nodes[:,0],nodes[:,1])
+    ths = np.arccos(nodes[:,2])
       
     return Grid_3d(type='spherical',ths=ths,phs=phs,w=weights)
 
@@ -371,6 +372,27 @@ def cart2sph(x, y, z):
     phi = np.arctan2(y, x)                       # Azimuthal angle
     phi = np.mod(phi, 2*np.pi)  # Ensure theta is in [0, 2*pi]
     return r, theta, phi
+
+
+
+    
+
+def image_downsample(images, ds_res, if_real=True, zero_nyquist=True):
+    L = images.shape[1]
+    start_idx = (L // 2) - (ds_res // 2)
+    slice_idx = slice(start_idx, start_idx + ds_res)
+    images_fft = fft.centered_fft2(images)
+    images_fft = images_fft[:,slice_idx,slice_idx]
+    if zero_nyquist:
+        images_fft[:,0,:] = 0 
+        images_fft[:,:,0] = 0
+    if if_real:
+        images =  np.array(fft.centered_ifft2(images_fft).real, dtype=np.float32)*(ds_res**2/L**2)
+        return images
+    else:
+        return np.array(images_fft, dtype=np.complex64)*(ds_res**2/L**2)
+        
+
 
 
 
@@ -733,8 +755,8 @@ def vol_upsample(vol_ds, L):
     
 
 
-def vol_proj(vol, rots, std, seed):
-
+def vol_proj(vol, rots, offsets=None):
+    
     nrot = rots.shape[0]
     n = vol.shape[0]
     if n % 2 == 0:
@@ -745,65 +767,226 @@ def vol_proj(vol, rots, std, seed):
     kx = kx.flatten(order='F')
     ky = ky.flatten(order='F')
     
-    rotated_grids = np.zeros((3,n**2,nrot))
-    for i in range(nrot):
-        rot = rots[i]
-        rotated_grids[:,:,i] = rot[:,0].reshape(-1, 1) @ kx.reshape(1,n**2)+rot[:,1].reshape(-1, 1) @ ky.reshape(1,n**2)
+    # rotated_grids = np.zeros((3,n**2,nrot))
+    # for i in range(nrot):
+    #     rot = rots[i]
+    #     rotated_grids[:,:,i] = rot[:,0].reshape(-1, 1) @ kx.reshape(1,n**2)+rot[:,1].reshape(-1, 1) @ ky.reshape(1,n**2)
+    K = np.vstack((kx, ky))        
+    R2 = rots[:, : , :2]      
+    rot_sub = R2 @ K
+    rotated_grids = rot_sub.transpose(1, 2, 0) 
+        
+    s = 2*np.pi*rotated_grids[0].flatten(order='F')
+    t = 2*np.pi*rotated_grids[1].flatten(order='F')
+    u = 2*np.pi*rotated_grids[2].flatten(order='F')
+    
+    vol = np.array(vol, dtype=np.complex128)
+    # vol = np.transpose(vol, (2,1,0))
+    vol = np.ascontiguousarray(vol)
+
+    
+    images_fft = finufft.nufft3d2(s,t,u,vol)
+    images_fft = images_fft.reshape(n,n,nrot,order='F').transpose(2,0,1)
+    if n//2==0:
+        images_fft[:,0,:] = 0 
+        images_fft[:,:,0] = 0 
+    if offsets is not None:
+        phase1 = np.einsum('i,j->ij',offsets[:,0].flatten(order='F'),kx)
+        phase1 = phase1.reshape(nrot,n,n,order='F')
+        phase2 = np.einsum('i,j->ij',offsets[:,1].flatten(order='F'),ky)
+        phase2 = phase2.reshape(nrot,n,n,order='F')
+        phase = np.exp(1j*2*np.pi*(phase1+phase2))
+        images_fft = images_fft*phase
+        
+    images = np.array(fft.centered_ifft2(images_fft).real , dtype=np.float32)
+        
+    return images
+
+
+
+def vol_proj1(vol, rots, offsets=None):
+    """
+    Compute 2D projections of a 3D volume with optional translation in Fourier space,
+    using zero-padding to eliminate periodic wrap-around artifacts.
+
+    Parameters
+    ----------
+    vol : ndarray, shape (n, n, n)
+        Input 3D volume.
+    rots : ndarray, shape (nrot, 3, 3)
+        Rotation matrices for each projection.
+    offsets : ndarray, shape (nrot, 2), optional
+        (dx, dy) shifts (in pixels) to apply to each 2D projection.
+
+    Returns
+    -------
+    images : ndarray, shape (nrot, n, n)
+        Real-valued 2D projections, cropped to original size.
+    """
+    n = vol.shape[0]
+    # pad by full size to avoid wrap-around
+    pad = n
+    n_pad = n + 2 * pad
+
+    # zero-pad the 3D volume on all sides
+    vol_padded = np.pad(vol, pad_width=pad, mode='constant')
+
+    # frequency grid for padded images
+    k = np.fft.fftfreq(n_pad)  # cycles per sample in [-0.5, 0.5)
+    kx, ky = np.meshgrid(k, k, indexing='xy')
+    kx = kx.flatten(order='F')
+    ky = ky.flatten(order='F')
+
+    # build rotated frequency coordinates
+    K = np.vstack((kx, ky))  # shape: (2, n_pad^2)
+    R2 = rots[:, :2, :2]     # take top-left 2x2 of each 3x3 rotation
+    # apply each rotation to (kx, ky)
+    # result shape: (nrot, 2, n_pad^2)
+    rot_k = np.einsum('rij,jk->rik', R2, K)
+
+    # phase coordinates for NUFFT: scale to [0, 2pi)
+    s = 2 * np.pi * rot_k[:, 0, :].ravel(order='F')
+    t = 2 * np.pi * rot_k[:, 1, :].ravel(order='F')
+    # third dimension is zero: projection along z
+    u = np.zeros_like(s)
+
+    # ensure contiguous complex volume
+    vol_padded = np.ascontiguousarray(vol_padded.astype(np.complex128))
+
+    # NUFFT: sample 3D FT on each rotated 2D plane
+    images_fft = finufft.nufft3d2(s, t, u, vol_padded)
+    # reshape to (nrot, n_pad, n_pad)
+    images_fft = images_fft.reshape(n_pad, n_pad, -1, order='F').transpose(2, 0, 1)
+
+    # apply translation in Fourier domain if requested
+    if offsets is not None:
+        # offsets in pixels; use negative sign for forward shift
+        dx = offsets[:, 0][:, None, None]
+        dy = offsets[:, 1][:, None, None]
+        # shape kx2d: (n_pad, n_pad)
+        kx2d = kx.reshape(n_pad, n_pad, order='F')
+        ky2d = ky.reshape(n_pad, n_pad, order='F')
+        # build phase per image
+        phase = np.exp(-2j * np.pi * (dx * kx2d + dy * ky2d))
+        images_fft *= phase
+
+    # inverse FFT back to spatial domain and take real part
+    images_full = centered_ifft2(images_fft).real  # shape: (nrot, n_pad, n_pad)
+
+    # crop to original size
+    start = pad
+    end = pad + n
+    images = images_full[:, start:end, start:end].astype(np.float32)
+
+    return images
+
+
+def vol_ds_proj_ft(vol, rots, ds_res):
+    
+
+    nrot = rots.shape[0]
+    n = vol.shape[0]
+    rots = rots.astype(np.float32)
+
+    ds_start = np.floor(n / 2) - np.floor(ds_res / 2)
+    ds_idx = np.arange(int(ds_start) + 1, int(ds_start) + ds_res + 1)  
+    ind1, ind2 = np.meshgrid(ds_idx, ds_idx, indexing='ij')  
+    ind1 = ind1.ravel(order='F')  
+    ind2 = ind2.ravel(order='F')
+    ind = np.ravel_multi_index((ind1 - 1, ind2 - 1), (n, n), order='F') 
+
+    
+    if n % 2 == 0:
+        k = np.arange(-n/2,n/2)/n 
+    else:
+        k = np.arange(-(n-1)/2,(n-1)/2+1)/n
+
+    kx, ky = np.meshgrid(k, k, indexing='xy')
+    kx = kx.flatten(order='F').astype(np.float32)
+    ky = ky.flatten(order='F').astype(np.float32)
+
+    
+    K = np.vstack((kx, ky)) 
+    K_sub = K[:, ind]          
+    R2 = rots[:, : , :2]      
+    rot_sub = np.matmul(R2, K_sub) 
+    rotated_grids = rot_sub.transpose(1, 2, 0) 
         
     s = 2*np.pi*rotated_grids[0].flatten(order='F')
     t = 2*np.pi*rotated_grids[1].flatten(order='F')
     u = 2*np.pi*rotated_grids[2].flatten(order='F')
 
+    vol = np.array(vol, dtype=np.complex64)
     
-    vol = np.array(vol, dtype=np.complex128)
-    # vol = np.transpose(vol, (1, 0, 2))
     vol = np.ascontiguousarray(vol)
 
-    
     Img_fft_rot = finufft.nufft3d2(s,t,u,vol)
-    Img_fft_rot = Img_fft_rot.reshape(n**2,nrot,order='F')
-    images = np.zeros((nrot,n,n), dtype=np.complex128)
-    np.random.seed(seed)
-    for i in range(nrot):
-        images[i] = centered_ifft2(Img_fft_rot[:,i].reshape(n,n))
-        if std>0:
-          images[i] = images[i] + np.random.normal(0,std,(n,n))
-        
-    return images
+    Img_fft_rot = Img_fft_rot.reshape(ds_res**2,nrot,order='F').T
+    return Img_fft_rot.reshape(nrot,ds_res,ds_res,order='F')*ds_res**2/n**2
+
+
+def plan_vol_ds_proj_ft(img_size):
+    return finufft.Plan(nufft_type=2,                       
+    n_modes_or_dim=(img_size,img_size,img_size),           
+    n_trans=1,eps=1e-4,isign=+1,dtype='complex64')
+
+
+
+def vol_ds_proj_ft_planned(vol, rots, ds_res, plan):
+    
+    nrot = rots.shape[0]
+    n = vol.shape[0]
+    rots = rots.astype(np.float32)
+
+    ds_start = np.floor(n / 2) - np.floor(ds_res / 2)
+    ds_idx = np.arange(int(ds_start) + 1, int(ds_start) + ds_res + 1)  
+    ind1, ind2 = np.meshgrid(ds_idx, ds_idx, indexing='ij')  
+    ind1 = ind1.ravel(order='F')  
+    ind2 = ind2.ravel(order='F')
+    ind = np.ravel_multi_index((ind1 - 1, ind2 - 1), (n, n), order='F') 
 
     
-
-def image_downsample(images, ds_res, if_real=True):
-    L = images.shape[1]
-    n = images.shape[0]
-    start_idx = (L // 2) - (ds_res // 2)
-    slice_idx = slice(start_idx, start_idx + ds_res)
-    if if_real:
-        images_ds = np.zeros([n,ds_res,ds_res], dtype=np.complex128)
+    if n % 2 == 0:
+        k = np.arange(-n/2,n/2)/n 
     else:
-        images_ds = np.zeros([n,ds_res,ds_res], dtype=np.complex128)
-    for i in range(n):
-        img = images[i]
-        img_fft = centered_fft2(img)
-        img_fft = img_fft[slice_idx,slice_idx]
-        if if_real:
-            images_ds[i] = centered_ifft2(img_fft)*(ds_res**2 / L**2)
-        else:
-            images_ds[i] = img_fft*(ds_res**2 / L**2)
+        k = np.arange(-(n-1)/2,(n-1)/2+1)/n
+
+    kx, ky = np.meshgrid(k, k, indexing='xy')
+    kx = kx.flatten(order='F').astype(np.float32)
+    ky = ky.flatten(order='F').astype(np.float32)
+
+    
+    K = np.vstack((kx, ky)) 
+    K_sub = K[:, ind]          
+    R2 = rots[:, : , :2]      
+    rot_sub = np.matmul(R2, K_sub) 
+    rotated_grids = rot_sub.transpose(1, 2, 0) 
         
-    return images_ds 
+    s = 2*np.pi*rotated_grids[0].flatten(order='F')
+    t = 2*np.pi*rotated_grids[1].flatten(order='F')
+    u = 2*np.pi*rotated_grids[2].flatten(order='F')
+    plan.setpts(s, t, u)
+
+    vol = np.array(vol, dtype=np.complex64)
+    vol = np.ascontiguousarray(vol)
+
+    Img_fft_rot = plan.execute(vol)
+    Img_fft_rot = Img_fft_rot.reshape(ds_res**2,nrot,order='F').T
+    return Img_fft_rot.reshape(nrot,ds_res,ds_res,order='F')*ds_res**2/n**2
+
+
 
 
 
 def get_subindices(D, d):
     ds_start = np.floor(D / 2) - np.floor(d / 2)
-    ds_idx = np.arange(int(ds_start) + 1, int(ds_start) + d + 1)  # MATLAB 1-based index to Python 0-based
+    ds_idx = np.arange(int(ds_start) + 1, int(ds_start) + d + 1)  
 
-    ind1, ind2 = np.meshgrid(ds_idx, ds_idx, indexing='ij')  # MATLAB-style grid
-    ind1 = ind1.ravel(order='F')  # Flatten in column-major order
+    ind1, ind2 = np.meshgrid(ds_idx, ds_idx, indexing='ij')  
+    ind1 = ind1.ravel(order='F')  
     ind2 = ind2.ravel(order='F')
 
-    ind = np.ravel_multi_index((ind1 - 1, ind2 - 1), (D, D), order='F')  # Convert to 0-based index
+    ind = np.ravel_multi_index((ind1 - 1, ind2 - 1), (D, D), order='F') 
 
     return ind
 
@@ -839,6 +1022,27 @@ def get_centered_fft2_submtx(n, row_id=None, col_id=None):
     F2 = np.exp(-1j * (np.outer(k1, x1) + np.outer(k2, x2)))
 
     return F2
+
+def sample_idxs(n,d,n_sample):
+    start_idx = (n // 2) - (d // 2)
+    slice_idx = slice(start_idx, start_idx + d)
+    if n % 2 == 0:
+        k = np.arange(-n/2,n/2)/n 
+    else:
+        k = np.arange(-(n-1)/2,(n-1)/2+1)/n
+    k = k[slice_idx]
+    kx,ky = np.meshgrid(k, k, indexing='xy')
+    kx = kx.flatten(order='F')
+    ky = ky.flatten(order='F')
+    k2 = kx**2+ky**2
+    zero_idx = int(np.argwhere(k2 == 0)[0][0])
+    probs = np.zeros(k2.shape)
+    probs[k2!=0] = 1/k2[k2!=0]
+    probs[k2!=0] = probs[k2!=0]/sum(probs[k2!=0])
+    idxs = np.random.choice(np.arange(d**2), size=n_sample-1, replace=False, p=probs)
+    idxs = np.sort(np.append(idxs,zero_idx))
+    return idxs 
+
     
 
 def get_preprocessing_matrix(D,d):
@@ -849,27 +1053,94 @@ def get_preprocessing_matrix(D,d):
     # return F 
 
 
-def get_estimated_std(vol, SNR):
-    n_rot = 100 
-    rots = np.zeros((n_rot,3,3))
+# def get_estimated_std(vol, SNR):
+#     n_rot = 100 
+#     rots = np.zeros((n_rot,3,3))
     
-    for i in range(n_rot):
-        alpha = np.random.uniform(0,2*np.pi)
-        beta = np.random.uniform(0,np.pi)
-        gamma = np.random.uniform(0,2*np.pi)
-        R = Rz(alpha) @ Ry(beta) @ Rz(gamma)
-        rots[i,:,:] = R
+#     for i in range(n_rot):
+#         alpha = np.random.uniform(0,2*np.pi)
+#         beta = np.random.uniform(0,np.pi)
+#         gamma = np.random.uniform(0,2*np.pi)
+#         R = Rz(alpha) @ Ry(beta) @ Rz(gamma)
+#         rots[i,:,:] = R
 
-    images = vol_proj(vol, rots, 0, 1)
-    gauss_noise = np.random.normal(0,1,images.shape)
+#     images = vol_proj(vol, rots, 0, 1)
+#     gauss_noise = np.random.normal(0,1,images.shape)
 
-    s = 0 
-    for i in range(n_rot):
-      s = s+np.sqrt(LA.norm(images[i],'fro')**2/SNR/LA.norm(gauss_noise[i],'fro')**2)/n_rot 
+#     s = 0 
+#     for i in range(n_rot):
+#       s = s+np.sqrt(LA.norm(images[i],'fro')**2/SNR/LA.norm(gauss_noise[i],'fro')**2)/n_rot 
 
-    return s 
+#     return s 
     
 
+def tns_norm(T):
+    return LA.norm(T.flatten())
 
 
+def trim_symmetric_lowrank(m2,U2,tol,r_max):
+    Q, Rmat = np.linalg.qr(U2, mode='reduced')    # Q:(n,R), Rmat:(R,R)
+    H_small = Rmat @ m2 @ Rmat.conj().T           # (R, R)
+    eigvals, eigvecs = np.linalg.eigh(H_small)    
+    idx      = np.argsort(np.abs(eigvals))[::-1]
+    eigvals  = eigvals[idx]
+    eigvecs  = eigvecs[:, idx]
+    R_full   = eigvals.size
+    sq       = np.abs(eigvals)**2
+    cumeng   = np.cumsum(sq)
+    total    = cumeng[-1]
+    if tol <= np.finfo(float).eps:
+        r = R_full
+    else:
+        k = np.searchsorted(cumeng, (1 - tol)*total, side='left')
+        r = min(k + 1, R_full)
+    if r>r_max:
+        r = r_max
+    V_r      = eigvecs[:, :r]                   # (R, r)
+    U2_trim  = Q @ V_r                          # (n, r), orthonormal columns
+    m2_trim  = np.diag(eigvals[:r])             # (r, r) diagonal core
 
+    return m2_trim, U2_trim, r, eigvals
+
+def trim_symmetric_tucker(core, U, tol, r_max):
+    """
+    Trim a symmetric Tucker decomposition
+        X ≈ core ×₁ U ×₂ U … ×ₙ U
+    down to a smaller rank r chosen so that the retained energy ≥ (1-tol).
+
+    Args:
+      core : np.ndarray, shape (R, R, ..., R)   # symmetric core, N modes
+      U    : np.ndarray, shape (I, R)           # factor, not necessarily orthonormal
+      tol  : float in [0,1), e.g. 0.01 for 99% energy retained
+
+    Returns:
+      core_trim : np.ndarray, shape (r, ..., r)
+      U_trim    : np.ndarray, shape (I, r)
+      r         : int, the chosen multilinear rank
+    """
+
+    Q, Rmat = np.linalg.qr(U, mode='reduced')     # Q: (I,R), Rmat: (R,R)
+
+    G = core
+    N = core.ndim
+    for mode in range(N):
+        G = np.tensordot(Rmat, G, axes=(1, mode))
+        G = np.moveaxis(G, 0, mode)
+
+    Rfull = G.shape[0]
+    G1    = G.reshape(Rfull, -1)                  # (R, R^(N-1))
+    Uc, S, Vh = np.linalg.svd(G1, full_matrices=False)
+
+    energy = np.cumsum(S**2)
+    energy /= energy[-1]
+    r = int(np.argmax(energy >= (1 - tol))) + 1
+    if r>r_max:
+        r = r_max
+    Qr     = Uc[:, :r]                             # (R, r)
+    U_trim = Q @ Qr                                # (I, r)
+    QrH = Qr.conj().T
+    core_trim = G
+    for mode in range(N):
+        core_trim = np.tensordot(QrH, core_trim, axes=(1, mode))
+        core_trim = np.moveaxis(core_trim, 0, mode)  # now shape (r,...,r)
+    return core_trim, U_trim, r, S

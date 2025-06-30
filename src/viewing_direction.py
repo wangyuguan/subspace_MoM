@@ -2,7 +2,9 @@ import numpy as np
 import numpy.linalg as LA 
 from utils import *
 from aspire.basis.basis_utils import lgwt
-
+import matplotlib.pyplot as plt
+from tqdm import trange
+import pymanopt
 
 
 def sample_vmf(N,centers,w,kappa,C=5.0):
@@ -269,6 +271,45 @@ def sph_harm_eval(spham_coef, ell_max_half, grid):
     
     return evals
 
+def plot_sph_harm(spham_coef, ell_max_half, fname=None):
+    phs = np.linspace(0, 2*np.pi, 100)
+    ths = np.linspace(0, np.pi,     100)
+    phs, ths = np.meshgrid(phs, ths) 
+    grid = Grid_3d(type='spherical', ths=ths.flatten(), phs=phs.flatten())
+    evals = sph_harm_eval(spham_coef, ell_max_half, grid)
+    evals = evals.reshape(100, 100).real
+
+    w = np.sin(ths)
+    evals_w = w * evals
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+
+    c = ax.pcolormesh(
+        phs,
+        ths,
+        evals_w,
+        shading='auto',
+        edgecolors='none',   # no cell boundaries
+        linewidth=0          # zero‐width lines
+    )
+
+    fig.colorbar(c, ax=ax)
+    ax.set_xlabel(r'$\alpha$', fontsize=12)
+    ax.set_ylabel(r'$\beta$',  fontsize=12)
+    ax.set_xlim(0,  2*np.pi)
+    ax.set_ylim(0,  np.pi)
+
+
+    ax.grid(False)
+
+
+    plt.tight_layout()
+
+    if fname:
+        fig.savefig(fname, format='pdf', bbox_inches='tight')
+
+    return evals, w, phs, ths
+
 
 def get_sph_r_t_c_mat(ell_max_half):
     
@@ -322,6 +363,143 @@ def sph_t_rot_coef(sph_coef, ell_max_half):
 
 
 
+def rot_t_sph_coef(rot_coef, ell_max_half):
+    
+    ell_max = 2*ell_max_half
+    n_coef = 0 
+    indices = {}
+    for ell in np.arange(ell_max+1):
+        if ell % 2 == 0:
+          for m in range(-ell, ell+1):
+              indices[(ell,m)] = n_coef 
+              n_coef += 1
+
+    sph_coef = np.zeros(rot_coef.shape, dtype=np.complex128)
+    for ell in range(ell_max+1):
+        if ell % 2 ==0:
+            for m in range(-ell,ell+1):
+                sph_coef[indices[(ell,m)]] = (-1)**m*rot_coef[indices[(ell,-m)]]*np.sqrt(4*np.pi/(2*ell+1))
+
+    return sph_coef
+
+
+
+def reflect_sph_coef(sph_coef, ell_max_half):
+    ell_max = 2*ell_max_half
+    n_coef = 0 
+    indices = {}
+    for ell in np.arange(ell_max+1):
+        if ell % 2 == 0:
+          for m in range(-ell, ell+1):
+              indices[(ell,m)] = n_coef 
+              n_coef += 1
+
+    sph_coef_ref = np.zeros(sph_coef.shape, dtype=np.complex128)
+    for ell in range(ell_max+1):
+        if ell % 2 ==0:
+            for m in range(-ell,ell+1):
+                sph_coef_ref[indices[(ell,m)]] = (-1)**m*sph_coef[indices[(ell,m)]]
+
+    return sph_coef_ref
+
+
+
+def rotate_sph_coef(sph_coef, Rot, ell_max_half):
+    ell_max = 2*ell_max_half
+    n_coef = 0 
+    indices = {}
+    for ell in np.arange(ell_max+1):
+        if ell % 2 == 0:
+          for m in range(-ell, ell+1):
+              indices[(ell,m)] = n_coef 
+              n_coef += 1
+    alpha, beta, gamma = rot_t_euler(Rot)
+    sph_coef_rot = np.zeros(sph_coef.shape, dtype=np.complex128)
+    for ell in range(ell_max+1):
+        if ell % 2 ==0:
+            Dl = wignerD(ell,alpha,beta,gamma)
+            sph_coef_rot[indices[(ell,-ell)]:indices[(ell,ell)]+1] = np.conj(Dl).T @ sph_coef[indices[(ell,-ell)]:indices[(ell,ell)]+1]
+
+    return sph_coef_rot
+
+
+
+def align_sph_coef(sph_coef, sph_coef_est,  ell_max_half):
+    
+    manifold = pymanopt.manifolds.SpecialOrthogonalGroup(3) 
+    @pymanopt.function.numpy(manifold)
+    def cost(Rot):
+        sph_coef_rot =  rotate_sph_coef(sph_coef_est, Rot, ell_max_half)
+        return LA.norm(sph_coef-sph_coef_rot)**2 / LA.norm(sph_coef)**2
+    
+    
+    sph_coef_est_ref =  reflect_sph_coef(sph_coef_est, ell_max_half)
+    @pymanopt.function.numpy(manifold)
+    def cost_ref(Rot):
+        sph_coef_rot =  rotate_sph_coef(sph_coef_est_ref, Rot, ell_max_half)
+        return LA.norm(sph_coef-sph_coef_rot)**2 / LA.norm(sph_coef)**2
+    
+    @pymanopt.function.numpy(manifold)
+    def grad(Rot):
+        return two_point_fd(cost, Rot, h=1e-6)
+    
+    @pymanopt.function.numpy(manifold)
+    def grad_ref(Rot):
+        return two_point_fd(cost_ref, Rot, h=1e-6)
+    
+    n = 30 
+    alpha = np.arange(n)*2*np.pi/n 
+    beta = np.arange(n)*np.pi/n 
+    gamma = np.arange(n)*2*np.pi/n 
+    alpha,beta,gamma= np.meshgrid(alpha,beta,gamma,indexing='xy')
+    alpha = alpha.flatten(order='F')
+    beta = beta.flatten(order='F')
+    gamma = gamma.flatten(order='F')
+    N_rot = len(gamma)
+    
+    Rots = np.zeros((N_rot,3,3))
+    cost_initial = 100000000
+    cost_ref_initial = 100000000
+    Rot0 = None 
+    Rot0_ref = None 
+
+    print('brute forcing...')
+    for i in trange(N_rot):
+        Rots[i] = Rz(alpha[i])@Ry(beta[i])@Rz(gamma[i])
+        cost_curr = cost(Rots[i])
+        cost_ref_curr = cost_ref(Rots[i])
+        if cost_curr<cost_initial:
+            cost_initial = cost_curr
+            Rot0 = Rots[i]
+        if cost_ref_curr<cost_ref_initial:
+            cost_ref_initial = cost_ref_curr
+            Rot0_ref = Rots[i]
+    
+    
+    print('refining...')
+    problem = pymanopt.Problem(manifold=manifold, cost=cost, euclidean_gradient=grad)
+    optimizer = pymanopt.optimizers.ConjugateGradient()
+    result = optimizer.run(problem,initial_point=Rot0)
+    Rot = result.point
+    cost_val = cost(Rot)
+    
+    
+    problem_ref = pymanopt.Problem(manifold=manifold, cost=cost_ref, euclidean_gradient=grad_ref)
+    result_ref = optimizer.run(problem_ref,initial_point=Rot0_ref)
+    Rot_ref = result_ref.point
+    cost_val_ref = cost_ref(Rot_ref)
+    
+    
+    if cost_val<cost_val_ref:
+        reflect= False 
+        sph_coef_rot =  rotate_sph_coef(sph_coef_est, Rot, ell_max_half)
+        return sph_coef_rot,Rot,cost_val,reflect 
+    else:
+        reflect= True
+        sph_coef_rot =  rotate_sph_coef(sph_coef_est_ref, Rot, ell_max_half)
+        return sph_coef_rot,Rot_ref,cost_val_ref,reflect 
+
+
 
 def precompute_rot_density(rot_coef, ell_max_half, euler_nodes):
     """
@@ -352,9 +530,3 @@ def precompute_rot_density(rot_coef, ell_max_half, euler_nodes):
                     Psi[i,indices[(ell,m)]] = Dl[m+ell,ell]
     
     return Psi
-
-    
-    
-    
-
-
