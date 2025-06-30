@@ -28,7 +28,7 @@ This package makes use of the following third-party data:
 
 ## Usage
 
-To generate a particle stack compatible with RELION:
+To generate the particle stacks in Section 4.2.2 of the paper:
 
 1. Open the file `run_noisy_images_example.py`.
 2. Uncomment the line:
