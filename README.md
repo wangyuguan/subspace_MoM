@@ -9,7 +9,7 @@ The reproducible code for the results in the paper is provided in the `examples/
 **Authors:** Jeremy Hoskins, Yuehaw Khoo, Oscar Mickelin, Amit Singer, and Yuguan Wang  
 **Version:** 2.0  
 **Release Date:** June 30, 2025  
-**Language:** Python
+**Language:** Python 3.13.2
 
 
 ## Third-Party Packages, Code, and Data
