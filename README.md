@@ -14,7 +14,7 @@ The reproducible code for the results in the paper is provided in the `examples/
 
 ## Third-Party Packages, Code, and Data
 
-This package makes use of the following third-party software:
+This package makes use of the following third-party software packages:
 
 1. [ASPIRE](https://github.com/PrincetonUniversity/aspire) — Python package for a comprehensive cryo-EM image analysis and reconstruction.
 2. [BOTalign](https://github.com/RuiyiYang/BOTalign) — Python package for alignment of 3-D density maps.
