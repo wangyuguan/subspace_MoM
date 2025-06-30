@@ -21,3 +21,4 @@ This package makes use of the following third-party software:
 3. [Pymanopt](https://pymanopt.org/) — Python package for optimization on manifolds.
 4. [FINUFFT](https://finufft.readthedocs.io/en/latest/) — Fast nonuniform FFT library.
 
+The cryo-EM volume data used in this work were downloaded from the [Electron Microscopy Data Bank (EMDB)](https://www.ebi.ac.uk/emdb/), a public repository of 3D EM maps.
