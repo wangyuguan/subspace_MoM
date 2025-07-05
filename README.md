@@ -40,5 +40,5 @@ To generate the particle stacks in Section 4.2.2 of the paper:
 
 Make sure to configure the parameters such as vol_path, snr, and defocus_ct according to your dataset and desired settings.
 
-The synthetic dataset can also be downloaded via 
+The synthetic datasets can also be downloaded from
 [https://zenodo.org/records/15815352].
