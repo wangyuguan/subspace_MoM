@@ -39,3 +39,6 @@ To generate the particle stacks in Section 4.2.2 of the paper:
    - Generate a folder named `particles/` containing the individual particle images.
 
 Make sure to configure the parameters such as vol_path, snr, and defocus_ct according to your dataset and desired settings.
+
+The synthetic dataset can also be downloaded via 
+[https://zenodo.org/records/15815352].
