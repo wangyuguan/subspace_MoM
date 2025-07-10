@@ -19,7 +19,7 @@ This package makes use of the following third-party software packages:
 1. [ASPIRE](https://github.com/PrincetonUniversity/aspire) — Python package for a comprehensive cryo-EM image analysis and reconstruction.
 2. [BOTalign](https://github.com/RuiyiYang/BOTalign) — Python package for alignment of 3-D density maps.
 3. [Pymanopt](https://pymanopt.org/) — Python package for optimization on manifolds.
-4. [FINUFFT](https://finufft.readthedocs.io/en/latest/) — Fast nonuniform FFT library.
+4. [FINUFFT](https://finufft.readthedocs.io/en/latest/) — Nonuniform fast Fourier transform (FFT) library.
 
 This package makes use of the following third-party data:
 
