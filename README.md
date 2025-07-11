@@ -1,6 +1,6 @@
 # Subspace method of moments for cryo-EM reconstruction
 
-This repository contains the complementary software for the paper:  
+This repository contains the complementary code for the paper:  
 **"Subspace method of moments for ab initio 3-D single-Particle cryo-EM reconstruction"**  
 [arXiv:2410.06889](https://arxiv.org/abs/2410.06889)
 
