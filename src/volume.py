@@ -5,7 +5,6 @@ from aspire.basis.basis_utils import all_besselj_zeros
 from scipy.special import spherical_jn
 from utils import *
 import pymanopt
-import matplotlib.pyplot as plt
 from scipy.interpolate import PchipInterpolator
 from tqdm import trange
 

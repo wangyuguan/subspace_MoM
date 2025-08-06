@@ -524,22 +524,22 @@ if __name__ == "__main__":
     batch_size = 1000
     defocus_ct = 100
 
-    snr = 1/4
+    # snr = 1/4
     # generate_example_images(vol_path, snr, batch_size, defocus_ct, 'ctf_image_snr_1_4.pdf')
     # generate_particles(vol_path, snr, batch_size, defocus_ct)
-    run_subspace_MoM(vol_path, snr, batch_size, defocus_ct, 'ctf_snr_1_4.npz')
+    # run_subspace_MoM(vol_path, snr, batch_size, defocus_ct, 'ctf_snr_1_4.npz')
 
 
     snr = 1/16
     # generate_example_images(vol_path, snr, batch_size, defocus_ct, 'ctf_image_snr_1_16.pdf')
-    # generate_particles(vol_path, snr, batch_size, defocus_ct)
-    run_subspace_MoM(vol_path, snr, batch_size, defocus_ct, 'ctf_snr_1_16.npz')
+    generate_particles(vol_path, snr, batch_size, defocus_ct)
+    # run_subspace_MoM(vol_path, snr, batch_size, defocus_ct, 'ctf_snr_1_16.npz')
 
     
-    snr = 1/64
+    # snr = 1/64
     # generate_example_images(vol_path, snr, batch_size, defocus_ct, 'ctf_image_snr_1_64.pdf')
     # generate_particles(vol_path, snr, batch_size, defocus_ct)
-    run_subspace_MoM(vol_path, snr, batch_size, defocus_ct, 'ctf_snr_1_64.npz')
+    # run_subspace_MoM(vol_path, snr, batch_size, defocus_ct, 'ctf_snr_1_64.npz')
 
    
           

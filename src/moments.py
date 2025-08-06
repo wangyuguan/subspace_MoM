@@ -6,22 +6,16 @@ import jax.numpy as jnp
 from utils import * 
 from viewing_direction import * 
 from volume import * 
-import e3x
 import math 
 import time 
 from scipy.optimize import minimize
 from scipy.linalg import svd
 from aspire.volume import Volume 
-from aspire.utils import Rotation
 from aspire.numeric import fft
 from aspire.source.simulation import Simulation
-from aspire.noise import WhiteNoiseAdder
-# from fle_2d_single import FLEBasis2D
-# from fast_cryo_pca import FastPCA
-from scipy.io import savemat 
 from tqdm import tqdm 
 from tqdm import trange
-import random 
+
 
 
 def sequential_moment_matching(m1_emp,m2_emp,m3_emp,U2,U3,ds_res,ell_max_vol,ell_max_half_view,L2=None,L3=None):
@@ -734,11 +728,6 @@ def moment_LS_analytical_test(x0, quadrature_rules, Phi_precomps, Psi_precomps,
         options={'disp': True,'maxiter':5000, 'ftol':1e-10, 'iprint':2, 'eps': 1e-4})
 
 
-    # linear_constraint = {'type': 'ineq', 'fun': lambda x: b_constr - A_constr @ x}
-    # objective = lambda x: find_cost_grad_analytical_test(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_emp, m3_emp, l1, l2, l3)
-    # result = minimize(objective, x0, method='SLSQP', jac=True, 
-    #     options={'disp': True,'maxiter':5000, 'ftol':1e-8, 'iprint':2, 'eps': 1e-4})
-    
     return result 
 
 
@@ -746,8 +735,6 @@ def find_cost_grad(x, quadrature_rules, Phi_precomps, Psi_precomps, m1_emp, m2_e
     
     _, w_so3_m2 = quadrature_rules['m2']
     _, w_so3_m3 = quadrature_rules['m3']
-    # Phi = Phi_precomps['m2']
-    # Psi = Psi_precomps['m3']
 
     # covert to jax array 
     x, w_so3_m2, w_so3_m3 = jnp.array(x), jnp.array(w_so3_m2), jnp.array(w_so3_m3)
@@ -776,8 +763,7 @@ def find_cost_grad_analytical_test(x, quadrature_rules, Phi_precomps, Psi_precom
     _, w_so3_m1 = quadrature_rules['m1']
     _, w_so3_m2 = quadrature_rules['m2']
     _, w_so3_m3 = quadrature_rules['m3']
-    # Phi = Phi_precomps['m2']
-    # Psi = Psi_precomps['m3']
+
 
     # covert to jax array 
     x, w_so3_m1, w_so3_m2, w_so3_m3 = jnp.array(x), jnp.array(w_so3_m1), jnp.array(w_so3_m2), jnp.array(w_so3_m3)
@@ -801,37 +787,6 @@ def find_cost_grad_analytical_test(x, quadrature_rules, Phi_precomps, Psi_precom
     return np.array(cost), np.array(grad)
 
 
-
-# def find_cost_grad_m1(x, w_so3, Phi, Psi, m1_emp, l1):
-    
-#     na = Phi.shape[2]
-#     a, b = x[:na],x[na:]
-#     b1 = np.concatenate([np.array([1]), b])
-#     n = len(w_so3)
-#     PCs = np.einsum('ijk,k->ij', Phi, a)
-#     w = w_so3*np.real(Psi @ b1) 
-
-#     m1_emp = m1_emp.flatten()
-#     m1 = np.zeros(PCs.shape[1], dtype=np.complex128)
-#     for i in range(n):
-#         m1 = m1+w[i]*PCs[i,:]
-#     C1 = m1-m1_emp
-#     C1_conj = np.conj(C1)
-
-#     cost = LA.norm(C1.flatten())**2 
-
-
-#     grad_a = np.zeros(Phi.shape[2])
-#     grad_rho = np.zeros(n)
-#     for i in range(n):
-#         grad_a = grad_a + 2*w[i]*np.real(np.conj(Phi[i,:,:]).T @ C1)
-#         # print(PCs[i,:].shape, C1_conj.shape)
-#         grad_rho[i] = 2*w_so3[i]*np.sum(np.real(PCs[i,:]*C1_conj))
-
-#     grad_b = np.conj(Psi).T @ grad_rho
-#     grad = np.concatenate([grad_a, grad_b[1:]])
-
-#     return cost / l1,  np.real(grad) / l1
 
 
 
@@ -1212,259 +1167,4 @@ def get_linear_ineqn_constraint(ell_max_half):
     A = -Psi[:,1:]
     b = Psi[:,0]
     return jnp.real(A), jnp.real(b), Psi 
-
-
-
-# def image_subspace_moments_CUR(vol, rotmats, h_ctfs, opts):
-#     r2_max = opts['r2_max'] 
-#     r3_max = opts['r3_max']
-#     tol2 = opts['tol2']
-#     tol3 = opts['tol3'] 
-#     ds_res = opts['ds_res'] 
-#     defocus_ct = opts['defocus_ct'] 
-#     batch_size = opts['batch_size'] 
-#     var = opts['var'] 
-
-#     img_size = vol.shape[0]
-#     plan = plan_vol_ds_proj_ft(img_size)
-#     img_size2 = img_size**2 
-#     num_img = rotmats.shape[0]
-#     ds_res2 = ds_res**2 
-#     ind = get_subindices(img_size, ds_res)
-
-#     G = jnp.array(np.random.normal(0,1,(ds_res2, r2_max)))
-#     G1 = jnp.array(np.random.normal(0,1,(ds_res2, r3_max)))
-#     G2 = jnp.array(np.random.normal(0,1,(ds_res2, r3_max)))
-
-#     # compress the masked moments 
-#     M1_ctf = 0
-#     M2_ctf_G = 0
-#     M3_ctf_G = 0
-
-#     print('sketch moments')
-#     for i in trange(defocus_ct):
-#         # np.random.seed(i)
-#         _rotmats = rotmats[(i*batch_size):(i+1)*batch_size,:,:]    
-#         H = jnp.array(h_ctfs[i].evaluate_grid(img_size))
-#         H = H.flatten(order='F')[ind]
-#         H2 = H**2
-#         projs_fft = jnp.array(vol_ds_proj_ft_planned(vol, _rotmats, ds_res, plan),dtype=jnp.complex64)
-#         projs_fft = projs_fft.reshape(batch_size,ds_res2,order='F')
-#         imgs_fft = projs_fft * H2[None,:]
-#         if var>0:
-#             noise = jnp.sqrt(var)*jax.random.normal(key=jax.random.key(i),shape=(batch_size, img_size, img_size),dtype=jnp.float32)
-#             noise_fft = image_downsample(noise, ds_res, False)
-#             noise_fft = jnp.array(noise_fft.reshape(batch_size,ds_res**2,order='F'))
-#             imgs_fft = imgs_fft+noise_fft * H[None,:]
-#         M1_ctf = M1_ctf + jnp.einsum('ni->i',imgs_fft,optimize='greedy')/num_img
-#         M2_ctf_G = M2_ctf_G + jnp.einsum('ni,nj->ij',imgs_fft,jnp.conj(imgs_fft)@G,optimize='greedy')/num_img
-#         M3_ctf_G = M3_ctf_G + jnp.einsum('ni,nj,nj->ij',imgs_fft,imgs_fft@G1,imgs_fft@G2,optimize='greedy')/num_img
-#     M1_ctf = M1_ctf.reshape(ds_res2,1,order='F')
-
-    
-   
-#     if var>0:
-#         print('remove bias from sketched moments')
-#         p = np.arange(img_size2)
-#         i =  p %  img_size
-#         j =  p // img_size  
-#         i_flip = (-i) % img_size
-#         j_flip = (-j) % img_size
-#         p_flip_full = i_flip + img_size * j_flip  
-#         rev = np.full(img_size2, -1, dtype=int)
-#         rev[ind] = np.arange(ds_res2)             
-#         p_flip_sub = p_flip_full[ind]               
-#         P_sub_idx = rev[p_flip_sub]                
-#         P_sub = np.zeros((ds_res2, ds_res2), dtype=int)
-#         rows = np.arange(ds_res2)
-#         mask = (P_sub_idx >= 0)
-#         P_sub[rows[mask], P_sub_idx[mask]] = 1
-#         _M1 = jnp.squeeze(M1_ctf)                   
-#         A = G1.T @ _M1                             
-#         B = G2.T @ _M1        
-#         # F = (ds_res/img_size)**2 * get_centered_fft2_submtx(img_size, ind)
-#         # conjF_T = jnp.conj(F).T 
-#         B2_ctf_G = jnp.zeros((ds_res2, r2_max), dtype=jnp.complex128)
-#         B3_ctf_G = jnp.zeros((ds_res2, r3_max), dtype=jnp.complex128)
-#         scale = (ds_res2/img_size2)**2*var/defocus_ct
-#         for i in trange(defocus_ct):
-#             h = jnp.array(h_ctfs[i].evaluate_grid(img_size)).flatten(order='F')[ind]
-#             # ----- B2 update  -----
-#             w = img_size2*(h**2)                   
-#             B2_ctf_G = B2_ctf_G + scale*(w[:, None]*G)
-#             # ----- B3 update  -----
-#             WG1 = h[:,None]*G1       
-#             WG2 = h[:,None]*G2
-#             WG1f = jnp.dot(P_sub,WG1) 
-#             WG2f = jnp.dot(P_sub,WG2)
-#             XY    = img_size2*jnp.sum(WG1*WG2f,axis=0)  
-#             M2b   = img_size2*(h[:, None]*WG2f)    
-#             M3b   = img_size2*(h[:, None]*WG1f)
-#             term1 = _M1[:, None]*XY[None, :]        
-#             term2 = M2b*A[None, :]         
-#             term3 = M3b*B[None, :]       
-#             B3_ctf_G = B3_ctf_G + scale * (term1 + term2 + term3)
-#             # h = (jnp.array(h_ctfs[i].evaluate_grid(img_size))
-#             #        .flatten(order='F')[ind])            
-#             # HF = h[:, None] * F                        
-        
-#             # # ----- B2 update -----
-#             # X = conjF_T @ (h[:, None] * G)             
-#             # B2_ctf_G = B2_ctf_G + var * (HF @ X) / defocus_ct
-        
-#             # # ----- B3 update -----
-#             # X  = G1.T @ HF                              
-#             # Y  = G2.T @ HF                             
-#             # XY = jnp.sum(X * Y, axis=1)                
-#             # M2b = HF @ Y.T                              
-#             # M3b = HF @ X.T                               
-        
-#             # term1 = _M1[:, None] * XY[None, :]             
-#             # term2 = M2b * A[None, :]                       
-#             # term3 = M3b * B[None, :]                        
-        
-#             # B3_ctf_G = B3_ctf_G + var * (term1 + term2 + term3) / defocus_ct
-
-            
-#         # B2_ctf_G = 0 
-#         # B3_ctf_G = 0 
-#         # _M1_ctf = jnp.squeeze(M1_ctf)
-#         # F = (ds_res/img_size)**2 * get_centered_fft2_submtx(img_size, ind)
-#         # for i in trange(defocus_ct):
-#         #     H = jnp.array(h_ctfs[i].evaluate_grid(img_size))
-#         #     H = H.flatten(order='F')[ind]
-#         #     H = jnp.diag(H)
-#         #     B2_ctf_G = B2_ctf_G + var*(H @ F) @ (jnp.conj(F.T)@ H @G)/defocus_ct
-#         #     HF = H@F
-#         #     X = G1.T @ HF            
-#         #     Y = G2.T @ HF           
-#         #     A = G1.T @ _M1_ctf         
-#         #     B = G2.T @ _M1_ctf
-#         #     term1 = jnp.einsum('p,kn,kn->pk',_M1_ctf,X,Y)   
-#         #     term2 = jnp.einsum('pn,kn,k->pk',HF,Y,A)    
-#         #     term3 = jnp.einsum('pn,kn,k->pk',HF,X,B)  
-#         #     B3_ctf_G = B3_ctf_G + var*(term1+term2+term3) / defocus_ct
-#         M2_ctf_G = M2_ctf_G - B2_ctf_G
-#         M3_ctf_G = M3_ctf_G - B3_ctf_G
-
-    
-#     U2_ctf,_,_ = LA.svd(M2_ctf_G,False)
-#     U3_ctf,_,_ = LA.svd(M3_ctf_G,False)
-
-
-#     I2 = jnp.array(sorted(random.sample(range(ds_res2), r2_max+60)))
-#     I3 = jnp.array(sorted(random.sample(range(ds_res2), r3_max+60)))
-#     J1 = jnp.array(sorted(random.sample(range(ds_res2), r3_max+20)))
-#     J2 = jnp.array(sorted(random.sample(range(ds_res2), r3_max+20)))
-
-#     m2_ctf = 0 
-#     m3_ctf = 0 
-#     H_M1 = 0 
-#     H_M2_I2 = 0
-#     H_M3_I3 = 0 
-#     H_M3_J1_J2 = 0
-#     print('form compressed moments')
-#     for i in trange(defocus_ct):
-#         np.random.seed(i)
-#         _rotmats = rotmats[(i*batch_size):(i+1)*batch_size,:,:]    
-#         H = jnp.array(h_ctfs[i].evaluate_grid(img_size))
-#         H = H.flatten(order='F')[ind]
-#         H2 = H**2
-#         H_M1 = H_M1+H2/defocus_ct
-#         H_M2_I2 = H_M2_I2+jnp.einsum('i,j->ij',H2,H2[I2],optimize='greedy')/defocus_ct
-#         H_M3_I3 = H_M3_I3+jnp.einsum('i,j,k->ijk',H2[I3],H2[I3],H2[I3],optimize='greedy')/defocus_ct
-#         H_M3_J1_J2 = H_M3_J1_J2+jnp.einsum('i,j,k->ijk',H2,H2[J1],H2[J2],optimize='greedy')/defocus_ct
-
-
-#         projs_fft = jnp.array(vol_ds_proj_ft_planned(vol, _rotmats, ds_res, plan),dtype=jnp.complex64)
-#         imgs_fft = projs_fft.reshape(batch_size,ds_res2,order='F') * H2[None,:]
-#         if var>0:
-#             noise = jnp.sqrt(var)*jax.random.normal(key=jax.random.key(i),shape=(batch_size, img_size, img_size),dtype=jnp.float32)
-#             noise_fft = image_downsample(noise, ds_res, False)
-#             noise_fft = jnp.array(noise_fft.reshape(batch_size,ds_res**2,order='F'))
-#             imgs_fft = imgs_fft+noise_fft*H[None,:]
-#         imgs_fft_U2 = jnp.einsum('ni,ij->nj',imgs_fft,jnp.conj(U2_ctf),optimize='greedy')
-#         imgs_fft_U3 = jnp.einsum('ni,ij->nj',imgs_fft,jnp.conj(U3_ctf),optimize='greedy')
-#         m2_ctf = m2_ctf + jnp.einsum('ni,nj->ij',imgs_fft_U2,jnp.conj(imgs_fft_U2),optimize='greedy')/num_img
-#         m3_ctf = m3_ctf + jnp.einsum('ni,nj,nk->ijk',imgs_fft_U3,imgs_fft_U3,imgs_fft_U3,optimize='greedy')/num_img
-
-#     if var>0:
-#         print('remove bias from compressed moments')
-#         U2_H = jnp.conj(U2_ctf).T               
-#         U3_H = jnp.conj(U3_ctf).T                
-#         _m1 = (U3_H @ _M1).ravel()             
-#         b2_ctf = jnp.zeros((r2_max, r2_max), dtype=jnp.complex128)
-#         b3_ctf = jnp.zeros((r3_max, r3_max, r3_max), dtype=jnp.complex128)
-        
-#         for i in trange(defocus_ct):
-#             h = jnp.array(h_ctfs[i].evaluate_grid(img_size)).flatten(order='F')[ind]
-#             # --- b2_ctf update ---
-#             w = img_size2*(h**2)                          
-#             b2_ctf = b2_ctf + scale * (U2_H @ (w[:, None] * U2_ctf))
-#             # --- b3_ctf update --
-#             HU3    = h[:, None] * U3_ctf
-#             PHU3   = jnp.dot(P_sub, HU3)   
-#             WPHU3  = h[:, None] * PHU3                   
-#             S      = img_size2 * (U3_H @ WPHU3)        
-#             term1  = _m1[:, None, None] * S[None, :, :] 
-#             term2  = term1.transpose(1, 0, 2)
-#             term3  = term1.transpose(1, 2, 0)
-#             b3_ctf = b3_ctf + scale * (term1 + term2 + term3)
-#             # h_full = jnp.array(h_ctfs[i].evaluate_grid(img_size))
-#             # h = h_full.flatten(order='F')[ind]  
-#             # HF  = h[:, None] * F                     
-#             # HG2 = h[:, None] * U2_ctf                
-#             # # ——— b2_ctf update ———
-#             # X2 = U2_H @ HF                            
-#             # Y2 = conjF_T @ HG2                        
-#             # b2_ctf = b2_ctf + var * (X2 @ Y2) / defocus_ct
-        
-#             # # ——— b3_ctf update ———
-#             # X3 = U3_H @ HF                            
-#             # S  = X3 @ X3.T                            
-#             # term1 = _m1[:, None, None] * S[None, :, :]    
-#             # term2 = term1.transpose(1, 0, 2)
-#             # term3 = term1.transpose(1, 2, 0)
-        
-#             # b3_ctf = b3_ctf + var * (term1 + term2 + term3) / defocus_ct
-#         # b2_ctf = 0 
-#         # b3_ctf = 0 
-#         # for i in trange(defocus_ct):
-#         #     H = h_ctfs[i].evaluate_grid(img_size)
-#         #     H = H.flatten(order='F')[ind]
-#         #     H = jnp.diag(H)
-#         #     b2_ctf = b2_ctf + var*( (jnp.conj(U2_ctf.T)@ H @ F) @ (jnp.conj(F).T @ H  @ U2_ctf))/defocus_ct
-#         #     U3_H = jnp.conj(U3_ctf).T       
-#         #     X = U3_H @ (H@F)             
-#         #     m = (U3_H @ M1_ctf).ravel() 
-#         #     term1 = jnp.einsum('a,bi,ci->abc',m,X,X) 
-#         #     term2 = term1.transpose(1,0,2)
-#         #     term3 = term1.transpose(1,2,0)
-#         #     b3_ctf = b3_ctf+var * (term1 + term2 + term3) / defocus_ct
-#         m2_ctf = m2_ctf-b2_ctf
-#         m3_ctf = m3_ctf-b3_ctf  
-        
-#     print('deconvolve the mask and compress via CUR')
-#     H_M1 = H_M1.reshape(ds_res2,1,order='F')
-#     M1 = M1_ctf / H_M1
-#     M2_ctf_I2 = U2_ctf @ m2_ctf @ jnp.conj(U2_ctf[I2,:]).T
-#     M2_I2 = M2_ctf_I2/H_M2_I2
-#     m2_cur = LA.pinv(M2_I2[I2,:])
-#     U2_cur = M2_I2
-#     m2,U2,r2,S2 = trim_symmetric_lowrank(m2_cur,U2_cur,tol2)
-#     print('r2='+str(r2))
-
-#     M3_ctf_I3 = jnp.einsum('ijk,ai,bj,ck->abc',m3_ctf,U3_ctf[I3,:],U3_ctf[I3,:],U3_ctf[I3,:],optimize='greedy')
-#     M3_I3 = M3_ctf_I3/H_M3_I3
-#     M3_ctf_J1_J2 = jnp.einsum('ijk,ai,bj,ck->abc',m3_ctf,U3_ctf,U3_ctf[J1,:],U3_ctf[J2,:],optimize='greedy')
-#     M3_J1_J2 = M3_ctf_J1_J2/H_M3_J1_J2
-#     M3_J1_J2 = M3_J1_J2.reshape(ds_res2,-1,order='F')
-#     U3_cur = M3_J1_J2 @ np.linalg.pinv(M3_J1_J2[I3,:]) 
-#     m3_cur = M3_I3
-#     m3, U3, r3, S3 = trim_symmetric_tucker(m3_cur, U3_cur, tol3)
-#     print('r3='+str(r3))
-
-#     m1 = jnp.conj(U2).T @ M1 
-#     return np.array(m1), np.array(m2), np.array(m3), np.array(U2), np.array(U3)
-
 
