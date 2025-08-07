@@ -3,8 +3,6 @@ from pathlib import Path
 
 
 # Add the 'src' directory to the Python path
-src_path = Path('../../fast-cryoEM-PCA').resolve()
-sys.path.append(str(src_path))
 src_path = Path('../src').resolve()
 sys.path.append(str(src_path))
 src_path = Path('../../BOTalign').resolve()

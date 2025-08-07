@@ -20,6 +20,7 @@ def image_subspace_moments_invariant():
 
 
 def ctf_image_subspace_moments_CUR(vol, rotmats, h_ctfs, opts):
+    # compress the moments using CUR
     tol2 = opts['tol2'] 
     tol3 = opts['tol3'] 
     nI2 = opts['nI2'] 
