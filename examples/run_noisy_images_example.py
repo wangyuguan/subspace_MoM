@@ -19,6 +19,7 @@ from aspire.noise import WhiteNoiseAdder
 from aspire.numeric import fft
 import mrcfile
 import numpy as np 
+import random 
 import numpy.linalg as LA 
 from viewing_direction import *
 from utils import *
@@ -104,12 +105,13 @@ def run_subspace_MoM(vol_path, snr, batch_size, defocus_ct, out_file_name=None):
     out['inplane_angles'] = inplane_angles
 
     # compute variance of white noise 
-    images = vol_proj(vol, rotmats[:defocus_ct])
+    images = vol_proj(vol, rotmats[:batch_size])
     signal_norm2 = 0
     noise_norm2 = 0 
     print('compute variance')
-    for i in trange(defocus_ct):
-        H = h_ctfs[i].evaluate_grid(img_size)
+    for i in trange(batch_size):
+        i_ctf = random.choice(np.arange(defocus_ct))
+        H = h_ctfs[i_ctf].evaluate_grid(img_size)
         signal_norm2 = signal_norm2+tns_norm(H*centered_fft2(images[i]))**2 
         noise_norm2 = noise_norm2+tns_norm(centered_fft2(np.random.normal(0,1,(img_size,img_size))))**2
     var = signal_norm2 / noise_norm2 / snr 
@@ -524,22 +526,22 @@ if __name__ == "__main__":
     batch_size = 1000
     defocus_ct = 100
 
-    # snr = 1/4
+    snr = 1/4
     # generate_example_images(vol_path, snr, batch_size, defocus_ct, 'ctf_image_snr_1_4.pdf')
     # generate_particles(vol_path, snr, batch_size, defocus_ct)
-    # run_subspace_MoM(vol_path, snr, batch_size, defocus_ct, 'ctf_snr_1_4.npz')
+    run_subspace_MoM(vol_path, snr, batch_size, defocus_ct, 'ctf_snr_1_4.npz')
 
 
     snr = 1/16
     # generate_example_images(vol_path, snr, batch_size, defocus_ct, 'ctf_image_snr_1_16.pdf')
-    generate_particles(vol_path, snr, batch_size, defocus_ct)
-    # run_subspace_MoM(vol_path, snr, batch_size, defocus_ct, 'ctf_snr_1_16.npz')
+    # generate_particles(vol_path, snr, batch_size, defocus_ct)
+    run_subspace_MoM(vol_path, snr, batch_size, defocus_ct, 'ctf_snr_1_16.npz')
 
     
-    # snr = 1/64
+    snr = 1/64
     # generate_example_images(vol_path, snr, batch_size, defocus_ct, 'ctf_image_snr_1_64.pdf')
     # generate_particles(vol_path, snr, batch_size, defocus_ct)
-    # run_subspace_MoM(vol_path, snr, batch_size, defocus_ct, 'ctf_snr_1_64.npz')
+    run_subspace_MoM(vol_path, snr, batch_size, defocus_ct, 'ctf_snr_1_64.npz')
 
    
           
