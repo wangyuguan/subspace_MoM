@@ -17,7 +17,6 @@ from tqdm import tqdm
 from tqdm import trange
 
 
-
 def sequential_moment_matching(m1_emp,m2_emp,m3_emp,U2,U3,ds_res,ell_max_vol,ell_max_half_view,L2=None,L3=None):
     subspaces = {}
     subspaces['m2'] = U2 
@@ -131,6 +130,10 @@ def sequential_moment_matching(m1_emp,m2_emp,m3_emp,U2,U3,ds_res,ell_max_vol,ell
     res['t_m3'] = t_m3
 
     return res 
+
+def image_subspace_moments_invariant():
+    return
+
 
 def ctf_image_subspace_moments_CUR(vol, rotmats, h_ctfs, opts):
     tol2 = opts['tol2'] 
