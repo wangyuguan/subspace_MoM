@@ -7,8 +7,11 @@ This repository contains the research code for the paper:
 The reproducible code for the results in the paper is provided in the `examples/` folder.
 
 **Paper authors:** Jeremy Hoskins, Yuehaw Khoo, Oscar Mickelin, Amit Singer, and Yuguan Wang  
+
 **Version:** 2.0  (The first version was in [MATLAB](https://github.com/wangyuguan/subspace_MoM_matlab]))
+
 **Release Date:** June 30, 2025  
+
 **Language:** Python 3.13.2
 
 
