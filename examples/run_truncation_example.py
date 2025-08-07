@@ -11,16 +11,13 @@ sys.path.append(str(src_path))
 from aspire.volume import Volume
 from aspire.utils.rotation import Rotation
 import mrcfile
-import time 
 import numpy as np 
 import numpy.linalg as LA 
 from viewing_direction import *
 from utils import *
-from aspire.basis.basis_utils import lgwt
+from optimization import *
 from volume import *
 from moments import * 
-import matplotlib.pyplot as plt
-from scipy.io import savemat
 from utils_BO import align_BO
 
 

@@ -25,6 +25,7 @@ from viewing_direction import *
 from utils import *
 from volume import *
 from moments import *
+from optimization import *
 from utils_BO import align_BO
 from tqdm import trange 
 import matplotlib.pyplot as plt 
@@ -457,12 +458,13 @@ def generate_example_images(vol_path, snr, batch_size, defocus_ct, fname):
         # rotmats[i,:,:] = Rz(alphs[i]) @ Ry(betas[i]) @ Rz(inplane_angles[i])
 
     # compute variance of white noise 
-    images = vol_proj(vol, rotmats[:defocus_ct])
+    images = vol_proj(vol, rotmats[:batch_size])
     signal_norm2 = 0
     noise_norm2 = 0 
     print('compute variance')
-    for i in trange(defocus_ct):
-        H = h_ctfs[i].evaluate_grid(img_size)
+    for i in trange(batch_size):
+        i_ctf = random.choice(np.arange(defocus_ct))
+        H = h_ctfs[i_ctf].evaluate_grid(img_size)
         signal_norm2 = signal_norm2+tns_norm(H*centered_fft2(images[i]))**2 
         noise_norm2 = noise_norm2+tns_norm(centered_fft2(np.random.normal(0,1,(img_size,img_size))))**2
     var = signal_norm2 / noise_norm2 / snr 
