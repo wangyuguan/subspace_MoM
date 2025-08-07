@@ -1,13 +1,13 @@
 # Subspace method of moments for cryo-EM reconstruction
 
-This repository contains the complementary software for the paper:  
+This repository contains the research code for the paper:  
 **"Subspace Method of Moments for Ab Initio 3-D Single-Particle Cryo-EM Reconstruction"**  
 [arXiv:2410.06889](https://arxiv.org/abs/2410.06889)
 
 The reproducible code for the results in the paper is provided in the `examples/` folder.
 
 **Paper authors:** Jeremy Hoskins, Yuehaw Khoo, Oscar Mickelin, Amit Singer, and Yuguan Wang  
-**Version:** 2.0  
+**Version:** 2.0  (The first version was in MATLAB [https://github.com/wangyuguan/subspace_MoM_matlab])
 **Release Date:** June 30, 2025  
 **Language:** Python 3.13.2
 
