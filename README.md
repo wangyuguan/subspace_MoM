@@ -29,18 +29,3 @@ This package makes use of the following third-party data:
 1. [Electron Microscopy Data Bank (EMDB)](https://www.ebi.ac.uk/emdb/) - A public repository of 3-D EM maps.
 2. [Quadrature Rules on Manifolds](https://www-user.tu-chemnitz.de/~potts/workgroup/graef/quadrature/index.php.en) - A repository containing high order quadrature rules on the unit sphere and 3-D rotation group.
 
-## Usage
-
-To generate the particle stacks in Section 4.2.2 of the paper:
-
-1. Open the file `run_noisy_images_example.py`.
-2. Uncomment the line:
-   ```python
-   generate_particles(vol_path, snr, batch_size, defocus_ct)
-3. Run the script. This will:
-   - Create a `.star` file that can be used as input for RELION.
-   - Generate a folder named `particles/` containing the individual particle images.
-
-Make sure to configure the parameters such as vol_path, snr, and defocus_ct according to your dataset and desired settings.
-
-The particle stack can be downloaded from https://zenodo.org/records/15815808.
